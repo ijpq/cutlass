@@ -57,6 +57,8 @@ namespace cutlass {
 namespace gemm {
 namespace threadblock {
 
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
 /// Template defininng default vector-matrix multiply operators inferred from
 /// threadblock tile size, global memory data layout.
 template <typename Shape_,  /// Shape of the threadblock vector-matrix multiply
@@ -145,6 +147,91 @@ struct DefaultGemvCore {
 };
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Partial specialization for 
+/// LayoutA: cutlass::layout::RowMajor
+/// LayoutB: cutlass::layout::RowMajor
+/// LayoutC: cutlass::layout::RowMajor
+template <typename Shape_,  /// Shape of the threadblock vector-matrix multiply
+                            /// operator
+          typename ThreadShape_,  /// Shape of per-thread vector-matrix multiply
+                                  /// operator
+          typename ElementA_,     /// Element data type of A operand
+          typename ElementB_,     /// Element data type of B operand
+          typename ElementC_>     /// Data type of accumulator
+struct DefaultGemvCore<
+        Shape_, ThreadShape_, ElementA_, cutlass::layout::RowMajor, ElementB_,
+        cutlass::layout::RowMajor, ElementC_, cutlass::layout::RowMajor> {
+    using Shape = Shape_;
+    using ThreadShape = ThreadShape_;
+
+    using LayoutA = cutlass::layout::RowMajor;
+    using LayoutB = cutlass::layout::RowMajor;
+    using LayoutC = cutlass::layout::RowMajor;
+
+    using ElementA = ElementA_;
+    using ElementB = ElementB_;
+    using ElementC = ElementC_;
+
+    static int const kThreadsPerN = Shape::kN / ThreadShape::kN;
+    static int const kThreadsPerK = Shape::kK / ThreadShape::kK;
+    using ThreadArrangement =
+            cutlass::layout::PitchLinearShape<kThreadsPerN, kThreadsPerK>;
+
+    using IteratorPolicyA =
+            cutlass::transform::PitchLinearTilePolicyStripminedThreadContiguous<
+                    layout::PitchLinearShape<ThreadShape::kK, Shape::kM>, 1,
+                    ThreadShape::kK>;
+
+    using IteratorA = cutlass::transform::threadblock::PredicatedTileIterator<
+            cutlass::MatrixShape<Shape::kM, Shape::kK>, ElementA, LayoutA, 1,
+            IteratorPolicyA>;
+
+    using IteratorPolicyB = cutlass::transform::
+            PitchLinear2DTilePolicyStripminedThreadContiguous<
+                    layout::PitchLinearShape<Shape::kN, Shape::kK>,
+                    ThreadArrangement, ThreadShape::kN>;
+
+    using IteratorB = cutlass::transform::threadblock::PredicatedTileIterator<
+            cutlass::MatrixShape<Shape::kK, Shape::kN>, ElementB, LayoutB, 0,
+            IteratorPolicyB>;
+
+    using IteratorPolicyC = typename platform::conditional<
+            platform::is_same<LayoutC, layout::RowMajor>::value,
+            cutlass::transform::PitchLinearTilePolicyStripminedThreadContiguous<
+                    layout::PitchLinearShape<Shape::kN, Shape::kM>,
+                    kThreadsPerN, ThreadShape::kN>,
+            cutlass::transform::PitchLinearTilePolicyStripminedThreadStrided<
+                    layout::PitchLinearShape<Shape::kM, Shape::kN>,
+                    kThreadsPerN, ThreadShape::kM>>::type;
+
+    using IteratorC = cutlass::transform::threadblock::PredicatedTileIterator<
+            cutlass::MatrixShape<Shape::kM, Shape::kN>, ElementC, LayoutC, 0,
+            IteratorPolicyC>;
+
+    using MmaSimtOp = typename cutlass::gemm::thread::Mma<
+            cutlass::gemm::GemmShape<ThreadShape::kM, ThreadShape::kN,
+                                     ThreadShape::kK>,
+            ElementA, LayoutA, ElementB, LayoutB, ElementC, LayoutC>;
+
+    using Operator = MmaSimtOp;
+
+    // Assertions for correctness
+    static_assert((Shape::kM == 1), "M=1 is required for GEMV");
+
+    static_assert((ThreadShape::kM == 1), "M=1 is required for GEMV");
+
+    static_assert(Shape::kK % ThreadShape::kK == 0,
+                  "Shape::K must be a multiple of ThreadShape::K");
+
+    static_assert(((ThreadShape::kK == 1) || (ThreadShape::kK == 2) ||
+                   (ThreadShape::kK == 4) || (ThreadShape::kK == 8) ||
+                   (ThreadShape::kK == 16) || (ThreadShape::kK == 32)),
+                  "ThreadShape::K must be a 1, 2, 4, 8, 16 or 32");
+};
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
 
 }  // namespace threadblock
 }  // namespace gemm

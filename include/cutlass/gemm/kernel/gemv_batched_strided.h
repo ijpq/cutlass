@@ -109,7 +109,7 @@ CUTLASS_DEVICE void GemvBatchedStridedDevice(
     // Construct iterators to A and B operands
     typename GemvKernel::IteratorA::Params params_A(ref_A.layout());
     typename GemvKernel::IteratorA iterator_A(params_A, ref_A.data(),
-                                              {1, problem_size.k()}, 0, {0, 0});
+                                              {1, problem_size.k()}, threadIdx.y, {0, 0});
 
     typename GemvKernel::IteratorB::Params params_B(ref_B.layout());
     typename GemvKernel::IteratorB iterator_B(
@@ -129,34 +129,36 @@ CUTLASS_DEVICE void GemvBatchedStridedDevice(
     // Compute threadblock-scoped gemv
     mma(problem_size.mnk(), accumulators, iterator_A, iterator_B, accumulators);
 
-    //
-    // Epilogue (TODO: Epiloge as template argument)
-    //
-    typename GemvKernel::FragmentCD fragment_CD;
+    if (threadIdx.y == 0) {
+        //
+        // Epilogue (TODO: Epiloge as template argument)
+        //
+        typename GemvKernel::FragmentCD fragment_CD;
 
-    // Load C (skip if beta is zero)
-    if (!BetaIsZero) {
+        // Load C (skip if beta is zero)
+        if (!BetaIsZero) {
+            tb_offset = swizzler.get_tile_offset();
+            ref_C.add_pointer_offset(batch_idx * ldc);
+            typename GemvKernel::IteratorCD::Params params_C(ref_C.layout());
+            typename GemvKernel::IteratorCD iterator_C(
+                    params_C, ref_C.data(), {1, problem_size.n()}, threadIdx.x,
+                    {0, tb_offset.n() * ThreadBlockGemv::Shape::kN});
+            iterator_C.load(fragment_CD);
+        }
+
+        // Apply alpha/beta scaling
+        EpilogueScale epilogue_scale(alpha, beta);
+        epilogue_scale(accumulators, fragment_CD, fragment_CD);
+
+        // Store D
         tb_offset = swizzler.get_tile_offset();
-        ref_C.add_pointer_offset(batch_idx * ldc);
-        typename GemvKernel::IteratorCD::Params params_C(ref_C.layout());
-        typename GemvKernel::IteratorCD iterator_C(
-                params_C, ref_C.data(), {1, problem_size.n()}, threadIdx.x,
+        ref_D.add_pointer_offset(batch_idx * ldd);
+        typename GemvKernel::IteratorCD::Params params_D(ref_D.layout());
+        typename GemvKernel::IteratorCD iterator_D(
+                params_D, ref_D.data(), {1, problem_size.n()}, threadIdx.x,
                 {0, tb_offset.n() * ThreadBlockGemv::Shape::kN});
-        iterator_C.load(fragment_CD);
+        iterator_D.store(fragment_CD);
     }
-
-    // Apply alpha/beta scaling
-    EpilogueScale epilogue_scale(alpha, beta);
-    epilogue_scale(accumulators, fragment_CD, fragment_CD);
-
-    // Store D
-    tb_offset = swizzler.get_tile_offset();
-    ref_D.add_pointer_offset(batch_idx * ldd);
-    typename GemvKernel::IteratorCD::Params params_D(ref_D.layout());
-    typename GemvKernel::IteratorCD iterator_D(
-            params_D, ref_D.data(), {1, problem_size.n()}, threadIdx.x,
-            {0, tb_offset.n() * ThreadBlockGemv::Shape::kN});
-    iterator_D.store(fragment_CD);
 }
 
 template <typename GemvKernel, typename ElementAlphaBeta, bool BetaIsZero>

@@ -95,6 +95,8 @@ cutlass_test_unit_add_executable(
   simt_zgemm_tt_sm50.cu
 
   gemm_splitk_simt_sm50.cu
+
+  gemv_batched_strided.cu
 )
 
 cutlass_test_unit_add_executable(
@@ -153,7 +155,6 @@ cutlass_test_unit_add_executable(
 
   gemm_splitk_serial_tensor_op_sm75.cu
   gemm_splitk_tensor_op_sm75.cu
-
 )
 
 cutlass_test_unit_add_executable(

@@ -180,6 +180,35 @@ struct PitchLinearTilePolicyStripminedThreadStrided {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+/// This ThreadMap is used by GEMVBatchedReduction
+template <typename Shape, typename ThreadArrangement, int ElementsPerAccess = 1>
+struct PitchLinear2DTilePolicyStripminedThreadContiguous {
+    static_assert((Shape::kContiguous %
+                   (ThreadArrangement::kContiguous * ElementsPerAccess)) == 0 &&
+                          (Shape::kStrided % ThreadArrangement::kStrided) == 0,
+                  "Shape must divide thread shape");
+
+    using TensorCoord = layout::PitchLinearCoord;
+
+    static int const kThreads = ThreadArrangement::kCount;
+    static int const kElementsPerAccess = ElementsPerAccess;
+
+    using Iterations = layout::PitchLinearShape<
+            Shape::kContiguous /
+                    (ThreadArrangement::kContiguous * kElementsPerAccess),
+            Shape::kStrided / ThreadArrangement::kStrided>;
+
+    using Delta = layout::PitchLinearShape<1, 1>;
+
+    CUTLASS_HOST_DEVICE
+    static TensorCoord initial_offset(int thread_id) {
+        return TensorCoord(thread_id * kElementsPerAccess,
+                           threadIdx.y * Iterations::kStrided);
+    }
+};
+
+////////////////////////////////////////////////////////////////////////////////
+
 /// Policy defining a warp-raked arrangement in which a shape is partitioned
 /// into contiguous elements.
 ///

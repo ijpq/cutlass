@@ -320,6 +320,51 @@ struct GemvBatchedStridedThreadblockDefaultSwizzle {
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// Threadblock swizzling function for batched GEMVs using  threadblock-scoped
+/// reduction
+struct GemvBatchedStridedThreadblockReductionSwizzle {
+    /// Returns the shape of the problem in units of logical tiles
+    CUTLASS_HOST_DEVICE
+    BatchedGemmCoord get_tiled_shape(BatchedGemmCoord problem_size,
+                                     BatchedGemmCoord tile_size) const {
+        return BatchedGemmCoord(
+                1,  // M is always 1
+                (problem_size.n() + tile_size.n() - 1) / tile_size.n(),
+                1, 
+                (problem_size.batch() + tile_size.batch() - 1) /
+                        tile_size.batch());
+    }
+
+    /// Computes CUDA grid dimensions given a size in units of logical tiles
+    CUTLASS_HOST_DEVICE
+    dim3 get_grid_shape(BatchedGemmCoord tiled_shape) const {
+        return dim3(tiled_shape.n(), tiled_shape.batch(), 1);
+    }
+
+    /// Obtains the threadblock offset (in units of threadblock-scoped tiles)
+    CUTLASS_DEVICE
+    BatchedGemmCoord get_tile_offset() const {
+        return BatchedGemmCoord{
+                0,  // M is always 1
+                RematerializeBlockIdxX(),
+                0, // always 0
+                RematerializeBlockIdxY(),
+        };
+    }
+
+    /// Gets the batch tile index
+    CUTLASS_DEVICE
+    int get_batch_tile_idx() const { return RematerializeBlockIdxY(); }
+
+    /// Gets the absolute batch index
+    CUTLASS_DEVICE
+    int get_batch_idx() const {
+        return RematerializeBlockIdxY();
+    }
+};
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
 }  // namespace threadblock
 }  // namespace gemm
 }  // namespace cutlass
