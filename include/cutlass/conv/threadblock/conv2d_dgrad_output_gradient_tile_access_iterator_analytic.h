@@ -57,23 +57,25 @@ namespace conv {
 namespace threadblock {
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
-template <typename Shape_, typename Element_, typename ThreadMap_,
+template <typename Shape_, typename Element_, typename Layout_,
+          typename ThreadMap_,
           conv::StrideSupport StrideSupport_ = conv::StrideSupport::kStrided>
 class Conv2dDgradOutputGradientTileAccessIteratorAnalytic;
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
 // Conv2dDgradOutputGradientTileAccessIteratorAnalytic strided dgrad needs
 // special handling using unscaled coordinations
-template <typename Shape_, typename Element_, typename ThreadMap_>
+template <typename Shape_, typename Element_, typename Layout_,
+          typename ThreadMap_>
 class Conv2dDgradOutputGradientTileAccessIteratorAnalytic<
-        Shape_, Element_, ThreadMap_, conv::StrideSupport::kStrided> {
+        Shape_, Element_, Layout_, ThreadMap_, conv::StrideSupport::kStrided> {
 public:
     //
     // Types
     //
     using Shape = Shape_;
     using Element = Element_;
-    using Layout = layout::TensorNHWC;
+    using Layout = Layout_;
     using ThreadMap = ThreadMap_;
     using AccessType = AlignedArray<Element, ThreadMap::kElementsPerAccess>;
     using TensorRef = cutlass::TensorRef<Element, Layout>;
@@ -132,8 +134,8 @@ private:
         int s = filter_s_;
 
         if (problem_size_.mode == Mode::kConvolution) {
-            r = (problem_size_.R - 1 - r);
-            s = (problem_size_.S - 1 - s);
+            r = (problem_size_.R - 1 - filter_r_);
+            s = (problem_size_.S - 1 - filter_s_);
         }
 
         int p = (h + problem_size_.pad_h - r * problem_size_.dilation_h);
@@ -263,6 +265,12 @@ public:
             return Status::kErrorInvalidProblem;
         }
 
+        if (platform::is_same<Layout, layout::TensorNCxHWx<32>>::value) {
+            if (problem_size.K % 32) {
+                return Status::kErrorInvalidProblem;
+            }
+        }
+
         return Status::kSuccess;
     }
 };
@@ -270,16 +278,17 @@ public:
 
 // Conv2dDgradOutputGradientTileAccessIteratorAnalytic for unity strides can be
 // optimized by eliminating modulo arithmetic to compute unscaled coordinates
-template <typename Shape_, typename Element_, typename ThreadMap_>
+template <typename Shape_, typename Element_, typename Layout_,
+          typename ThreadMap_>
 class Conv2dDgradOutputGradientTileAccessIteratorAnalytic<
-        Shape_, Element_, ThreadMap_, conv::StrideSupport::kUnity> {
+        Shape_, Element_, Layout_, ThreadMap_, conv::StrideSupport::kUnity> {
 public:
     //
     // Types
     //
     using Shape = Shape_;
     using Element = Element_;
-    using Layout = layout::TensorNHWC;
+    using Layout = Layout_;
     using ThreadMap = ThreadMap_;
     using AccessType = AlignedArray<Element, ThreadMap::kElementsPerAccess>;
     using TensorRef = cutlass::TensorRef<Element, Layout>;
@@ -410,14 +419,12 @@ public:
         int s = filter_s_;
 
         if (problem_size_.mode == Mode::kConvolution) {
-            r = (problem_size_.R - 1 - r);
-            s = (problem_size_.S - 1 - s);
+            r = (problem_size_.R - 1 - filter_r_);
+            s = (problem_size_.S - 1 - filter_s_);
         }
 
-        int p = (h + problem_size_.pad_h - r * problem_size_.dilation_h) /
-                problem_size_.stride_h;
-        int q = (w + problem_size_.pad_w - s * problem_size_.dilation_w) /
-                problem_size_.stride_w;
+        int p = (h + problem_size_.pad_h - r * problem_size_.dilation_h);
+        int q = (w + problem_size_.pad_w - s * problem_size_.dilation_w);
 
         return TensorCoord(n, p, q, filter_k_);
     }
@@ -471,6 +478,12 @@ public:
         // check alignment constraint on iterator's contiguous dimension
         if (problem_size.K % (128 / sizeof_bits<Element>::value)) {
             return Status::kErrorInvalidProblem;
+        }
+
+        if (platform::is_same<Layout, layout::TensorNCxHWx<32>>::value) {
+            if (problem_size.K % 32) {
+                return Status::kErrorInvalidProblem;
+            }
         }
 
         return Status::kSuccess;

@@ -37,6 +37,21 @@
    through memory.
 */
 
+/**
+ * \file
+ * include/cutlass/transform/threadblock/regular_tile_iterator_pitch_linear.h
+ *
+ * Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT ARRANTIES OR CONDITIONS OF ANY KIND, either express or
+ * implied.
+ *
+ * This file has been modified by Megvii ("Megvii Modification").
+ * All Megvii Modifications are Copyright (C) 2014-2020 Megvii Inc. All rights
+ * reserved.
+ */
 #pragma once
 
 #include "cutlass/cutlass.h"
@@ -368,6 +383,224 @@ public:
     using Underlying = RegularTileIterator<
             layout::PitchLinearShape<Shape::kRow, Shape::kColumn>, Element,
             layout::PitchLinear, (kAdvanceRank == 0 ? 0 : 1), ThreadMap>;
+
+    static_assert(
+            kAdvanceRank == 0 || kAdvanceRank == 1,
+            "Advance rank may only be along the row or column dimensions.");
+
+private:
+    Underlying iterator_;
+
+public:
+    CUTLASS_DEVICE
+    RegularTileIterator() {}
+
+    CUTLASS_DEVICE
+    RegularTileIterator(TensorRef const& ref, int thread_idx)
+            : iterator_({ref.data(), ref.stride()}, thread_idx) {}
+
+    /// Loads a fragment
+    CUTLASS_HOST_DEVICE
+    void load_with_pointer_offset(Fragment& frag, Index pointer_offset) {
+        iterator_.load_with_pointer_offset(frag, pointer_offset);
+    }
+
+    /// Loads a fragment
+    CUTLASS_HOST_DEVICE
+    void load(Fragment& frag, TensorCoord const& tile_offset) {
+        iterator_.load_with_pointer_offset(
+                frag, {tile_offset.row(), tile_offset.column()});
+    }
+
+    /// Loads a fragment
+    CUTLASS_HOST_DEVICE
+    void load(Fragment& frag) { iterator_.load_with_pointer_offset(frag, 0); }
+
+    /// Stores a fragment
+    CUTLASS_HOST_DEVICE
+    void store_with_pointer_offset(Fragment const& frag, Index pointer_offset) {
+        iterator_.store_with_pointer_offset(frag, pointer_offset);
+    }
+
+    /// Stores a fragment
+    CUTLASS_HOST_DEVICE
+    void store(Fragment const& frag, TensorCoord const& tile_offset) {
+        iterator_.store_with_pointer_offset(
+                frag, {tile_offset.row(), tile_offset.column()});
+    }
+
+    /// Stores a fragment
+    CUTLASS_HOST_DEVICE
+    void store(Fragment const& frag) {
+        iterator_.store_with_pointer_offset(frag, 0);
+    }
+
+    /// Advances the pointer
+    CUTLASS_HOST_DEVICE
+    RegularTileIterator& operator++() {
+        ++iterator_;
+        return *this;
+    }
+
+    /// Advances the pointer
+    CUTLASS_HOST_DEVICE
+    RegularTileIterator& operator--() {
+        --iterator_;
+        return *this;
+    }
+
+    /// Adds a pointer offset in units of Element
+    CUTLASS_HOST_DEVICE
+    void add_pointer_offset(LongIndex pointer_offset) {
+        iterator_.add_pointer_offset(pointer_offset);
+    }
+
+    /// Adds a tile offset
+    CUTLASS_DEVICE
+    void add_tile_offset(TensorCoord const& coord) {
+        iterator_.add_tile_offset({coord.row(), coord.column()});
+    }
+};
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Regular tile iterator specialized for pitch-linear
+template <typename Shape_, typename Element_, int AdvanceRank,
+          typename ThreadMap_, int Alignment, int InterleavedK>
+class RegularTileIterator<Shape_, Element_,
+                          layout::RowMajorInterleaved<InterleavedK>,
+                          AdvanceRank, ThreadMap_, Alignment> {
+public:
+    using Shape = Shape_;
+    using Element = Element_;
+    using Layout = layout::RowMajorInterleaved<InterleavedK>;
+    static int const kAdvanceRank = AdvanceRank;
+    using ThreadMap = ThreadMap_;
+    static int const kAlignment = Alignment;
+
+    using Index = typename Layout::Index;
+    using LongIndex = typename Layout::LongIndex;
+
+    using TensorRef = TensorRef<Element, Layout>;
+    using TensorCoord = typename Layout::TensorCoord;
+
+    using Fragment = Array<Element, ThreadMap::Iterations::kCount *
+                                            ThreadMap::kElementsPerAccess>;
+
+    using Underlying = RegularTileIterator<
+            layout::PitchLinearShape<Shape::kColumn * InterleavedK,
+                                     Shape::kRow / InterleavedK>,
+            Element, layout::PitchLinear, (kAdvanceRank == 0 ? 1 : 0),
+            ThreadMap>;
+
+    static_assert(
+            kAdvanceRank == 0 || kAdvanceRank == 1,
+            "Advance rank may only be along the row or column dimensions.");
+
+private:
+    Underlying iterator_;
+
+public:
+    CUTLASS_DEVICE
+    RegularTileIterator() {}
+
+    CUTLASS_DEVICE
+    RegularTileIterator(TensorRef const& ref, int thread_idx)
+            : iterator_({ref.data(), ref.stride()}, thread_idx) {}
+
+    /// Loads a fragment
+    CUTLASS_HOST_DEVICE
+    void load_with_pointer_offset(Fragment& frag, Index pointer_offset) {
+        iterator_.load_with_pointer_offset(frag, pointer_offset);
+    }
+
+    /// Loads a fragment
+    CUTLASS_HOST_DEVICE
+    void load(Fragment& frag, TensorCoord const& tile_offset) {
+        iterator_.load_with_pointer_offset(
+                frag, {tile_offset.row(), tile_offset.column()});
+    }
+
+    /// Loads a fragment
+    CUTLASS_HOST_DEVICE
+    void load(Fragment& frag) { iterator_.load_with_pointer_offset(frag, 0); }
+
+    /// Stores a fragment
+    CUTLASS_HOST_DEVICE
+    void store_with_pointer_offset(Fragment const& frag, Index pointer_offset) {
+        iterator_.store_with_pointer_offset(frag, pointer_offset);
+    }
+
+    /// Stores a fragment
+    CUTLASS_HOST_DEVICE
+    void store(Fragment const& frag, TensorCoord const& tile_offset) {
+        iterator_.store_with_pointer_offset(
+                frag, {tile_offset.row(), tile_offset.column()});
+    }
+
+    /// Stores a fragment
+    CUTLASS_HOST_DEVICE
+    void store(Fragment const& frag) {
+        iterator_.store_with_pointer_offset(frag, 0);
+    }
+
+    /// Advances the pointer
+    CUTLASS_HOST_DEVICE
+    RegularTileIterator& operator++() {
+        ++iterator_;
+        return *this;
+    }
+
+    /// Advances the pointer
+    CUTLASS_HOST_DEVICE
+    RegularTileIterator& operator--() {
+        --iterator_;
+        return *this;
+    }
+
+    /// Adds a pointer offset in units of Element
+    CUTLASS_HOST_DEVICE
+    void add_pointer_offset(LongIndex pointer_offset) {
+        iterator_.add_pointer_offset(pointer_offset);
+    }
+
+    /// Adds a tile offset
+    CUTLASS_DEVICE
+    void add_tile_offset(TensorCoord const& coord) {
+        iterator_.add_tile_offset({coord.column(), coord.row()});
+    }
+};
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Regular tile iterator specialized for pitch-linear
+template <typename Shape_, typename Element_, int AdvanceRank,
+          typename ThreadMap_, int Alignment, int InterleavedK>
+class RegularTileIterator<Shape_, Element_,
+                          layout::ColumnMajorInterleaved<InterleavedK>,
+                          AdvanceRank, ThreadMap_, Alignment> {
+public:
+    using Shape = Shape_;
+    using Element = Element_;
+    using Layout = layout::ColumnMajorInterleaved<InterleavedK>;
+    static int const kAdvanceRank = AdvanceRank;
+    using ThreadMap = ThreadMap_;
+    static int const kAlignment = Alignment;
+
+    using Index = typename Layout::Index;
+    using LongIndex = typename Layout::LongIndex;
+
+    using TensorRef = TensorRef<Element, Layout>;
+    using TensorCoord = typename Layout::TensorCoord;
+
+    using Fragment = Array<Element, ThreadMap::Iterations::kCount *
+                                            ThreadMap::kElementsPerAccess>;
+
+    using Underlying = RegularTileIterator<
+            layout::PitchLinearShape<Shape::kRow * InterleavedK,
+                                     Shape::kColumn / InterleavedK>,
+            Element, layout::PitchLinear, (kAdvanceRank == 0 ? 0 : 1),
+            ThreadMap>;
 
     static_assert(
             kAdvanceRank == 0 || kAdvanceRank == 1,

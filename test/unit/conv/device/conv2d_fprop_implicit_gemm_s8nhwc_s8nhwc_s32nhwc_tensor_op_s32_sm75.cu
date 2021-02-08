@@ -33,6 +33,7 @@
 
 #include "cutlass/conv/kernel/default_conv2d_fprop.h"
 #include "cutlass/conv/device/implicit_gemm_convolution.h"
+#include "cutlass/conv/kernel/default_conv2d_dgrad_trans.h"
 
 #include "conv2d_testbed.h"
 
@@ -106,6 +107,41 @@ TEST(SM75_Device_Conv2d_Fprop_Optimized_ImplicitGemm_s8nhwc_s8nhwc_s32nhwc_tenso
 
     /// Run all unit test sizes with device-level Conv2d instance
     EXPECT_TRUE(test::conv::device::TestAllConv2d<Conv2dFprop>());
+}
+
+TEST(SM75_Device_Conv2d_Dgrad_kAnalytic_ImplicitGemm_s8nhwc_s8nhwc_s32nhwc_tensor_op_s32,
+     128x128_64x2_64x64x64) {
+    /// Conv operation element types for the Gemm equivalent (ImplicitGemm)
+    using ElementA = int8_t;
+    using ElementB = int8_t;
+    using ElementC = int32_t;
+    using ElementAccumulator = int32_t;
+    using ElementCompute = float;
+
+    /// Device-level Conv2d instance
+    using Conv2dDgradKernel =
+            typename cutlass::conv::kernel::DefaultConv2dDgrad<
+                    ElementA, cutlass::layout::TensorNHWC, ElementB,
+                    cutlass::layout::TensorCHWN, ElementC,
+                    cutlass::layout::TensorNHWC, ElementAccumulator,
+                    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm75,
+                    cutlass::gemm::GemmShape<128, 128, 64>,
+                    cutlass::gemm::GemmShape<64, 64, 64>,
+                    cutlass::gemm::GemmShape<8, 8, 16>,
+                    cutlass::epilogue::thread::LinearCombination<
+                            ElementC,
+                            64 / cutlass::sizeof_bits<ElementC>::value,
+                            ElementAccumulator, ElementCompute>,
+                    cutlass::gemm::threadblock::
+                            GemmIdentityThreadblockSwizzle<>,
+                    2, cutlass::arch::OpMultiplyAddSaturate,
+                    cutlass::conv::IteratorAlgorithm::kAnalytic,
+                    cutlass::conv::StrideSupport::kStrided>::Kernel;
+
+    using Conv2dDgrad =
+            cutlass::conv::device::ImplicitGemmConvolution<Conv2dDgradKernel>;
+
+    EXPECT_TRUE(test::conv::device::TestAllConv2d<Conv2dDgrad>());
 }
 
 ////////////////////////////////////////////////////////////////////////////////

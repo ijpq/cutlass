@@ -67,7 +67,8 @@ struct TensorEqualsFunc {
 
     /// Ctor
     TensorEqualsFunc(TensorView<Element, Layout> const& lhs_,
-                     TensorView<Element, Layout> const& rhs_)
+                     TensorView<Element, Layout> const& rhs_,
+                     double /* episilon_ */)
             : lhs(lhs_), rhs(rhs_), result(true) {}
 
     /// Visits a coordinate
@@ -84,35 +85,73 @@ struct TensorEqualsFunc {
     operator bool() const { return result; }
 };
 
+template <typename Layout>  ///< Layout function
+struct TensorEqualsFunc<float, Layout> {
+    using Element = float;
+    //
+    // Data members
+    //
+
+    TensorView<Element, Layout> lhs;
+    TensorView<Element, Layout> rhs;
+    double episilon;
+    bool result;
+
+    /// Ctor
+    TensorEqualsFunc() : episilon(1e-4), result(true) {}
+
+    /// Ctor
+    TensorEqualsFunc(double episilon_) : episilon(episilon_), result(true) {}
+
+    /// Ctor
+    TensorEqualsFunc(TensorView<Element, Layout> const& lhs_,
+                     TensorView<Element, Layout> const& rhs_,
+                     double episilon_ = 1e-4)
+            : lhs(lhs_), rhs(rhs_), episilon(episilon_), result(true) {}
+
+    /// Visits a coordinate
+    void operator()(Coord<Layout::kRank> const& coord) {
+        Element lhs_ = lhs.at(coord);
+        Element rhs_ = rhs.at(coord);
+
+        auto numerator = lhs_ - rhs_;
+        auto denominator =
+                std::max(std::max(std::abs(lhs_), std::abs(rhs_)), 1.f);
+        if (std::abs(numerator / denominator) >= episilon) {
+            result = false;
+        }
+    }
+
+    /// Returns true if equal
+    operator bool() const { return result; }
+};
+
 }  // namespace detail
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Returns true if two tensor views are equal.
-template <
-  typename Element,               ///< Element type
-  typename Layout>                ///< Layout function
-bool TensorEquals(
-  TensorView<Element, Layout> const &lhs, 
-  TensorView<Element, Layout> const &rhs) {
+template <typename Element,  ///< Element type
+          typename Layout>   ///< Layout function
+bool TensorEquals(TensorView<Element, Layout> const& lhs,
+                  TensorView<Element, Layout> const& rhs,
+                  double episilon = 1e-4) {
     // Extents must be identical
     if (lhs.extent() != rhs.extent()) {
         return false;
     }
 
-    detail::TensorEqualsFunc<Element, Layout> func(lhs, rhs);
+    detail::TensorEqualsFunc<Element, Layout> func(lhs, rhs, episilon);
     TensorForEach(lhs.extent(), func);
 
     return bool(func);
 }
 
 /// Returns true if two tensor views are equal.
-template <
-  typename Element,               ///< Element type
-  typename Layout>                ///< Layout function
-bool TensorEquals(
-  TensorViewPlanarComplex<Element, Layout> const &lhs, 
-  TensorViewPlanarComplex<Element, Layout> const &rhs) {
+template <typename Element,  ///< Element type
+          typename Layout>   ///< Layout function
+bool TensorEquals(TensorViewPlanarComplex<Element, Layout> const& lhs,
+                  TensorViewPlanarComplex<Element, Layout> const& rhs) {
     // Extents must be identical
     if (lhs.extent() != rhs.extent()) {
         return false;
@@ -141,12 +180,10 @@ bool TensorEquals(
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Returns true if two tensor views are NOT equal.
-template <
-  typename Element,               ///< Element type
-  typename Layout>                ///< Layout function
-bool TensorNotEquals(
-  TensorView<Element, Layout> const &lhs, 
-  TensorView<Element, Layout> const &rhs) {
+template <typename Element,  ///< Element type
+          typename Layout>   ///< Layout function
+bool TensorNotEquals(TensorView<Element, Layout> const& lhs,
+                     TensorView<Element, Layout> const& rhs) {
     // Extents must be identical
     if (lhs.extent() != rhs.extent()) {
         return true;
@@ -159,12 +196,10 @@ bool TensorNotEquals(
 }
 
 /// Returns true if two tensor views are equal.
-template <
-  typename Element,               ///< Element type
-  typename Layout>                ///< Layout function
-bool TensorNotEquals(
-  TensorViewPlanarComplex<Element, Layout> const &lhs, 
-  TensorViewPlanarComplex<Element, Layout> const &rhs) {
+template <typename Element,  ///< Element type
+          typename Layout>   ///< Layout function
+bool TensorNotEquals(TensorViewPlanarComplex<Element, Layout> const& lhs,
+                     TensorViewPlanarComplex<Element, Layout> const& rhs) {
     return !TensorEquals(lhs, rhs);
 }
 
@@ -215,12 +250,9 @@ struct TensorContainsFunc {
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Returns true if a value is present in a tensor
-template <
-  typename Element,               ///< Element type
-  typename Layout>                ///< Layout function
-bool TensorContains(
-  TensorView<Element, Layout> const & view,
-  Element value) {
+template <typename Element,  ///< Element type
+          typename Layout>   ///< Layout function
+bool TensorContains(TensorView<Element, Layout> const& view, Element value) {
     detail::TensorContainsFunc<Element, Layout> func(view, value);
 
     TensorForEach(view.extent(), func);
@@ -235,8 +267,8 @@ bool TensorContains(
 /// in the tensor, the second element of the pair is undefined.
 template <typename Element,  ///< Element type
           typename Layout>   ///< Layout function
-std::pair<bool, Coord<Layout::kRank> >
-TensorFind(TensorView<Element, Layout> const& view, Element value) {
+std::pair<bool, Coord<Layout::kRank> > TensorFind(
+        TensorView<Element, Layout> const& view, Element value) {
     detail::TensorContainsFunc<Element, Layout> func(view, value);
 
     TensorForEach(view.extent(), func);

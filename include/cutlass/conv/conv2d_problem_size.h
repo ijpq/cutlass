@@ -453,6 +453,22 @@ cutlass::Tensor4DCoord implicit_gemm_tensor_c_extent(
     return cutlass::Tensor4DCoord();
 }
 
+CUTLASS_HOST_DEVICE
+cutlass::Tensor4DCoord implicit_gemm_tensor_bias_extent(
+        Operator conv_operator, Conv2dProblemSize const& problem_size) {
+    switch (conv_operator) {
+        case cutlass::conv::Operator::kFprop:
+            return cutlass::Tensor4DCoord({1, 1, 1, problem_size.K});
+        case cutlass::conv::Operator::kDgrad:
+            return cutlass::Tensor4DCoord({1, 1, 1, problem_size.C});
+        case cutlass::conv::Operator::kWgrad:
+            return cutlass::Tensor4DCoord({1, 1, 1, problem_size.C});
+        default:
+            break;
+    }
+    return cutlass::Tensor4DCoord();
+}
+
 /// Returns ImplicitGemm tensor A size in number of elements
 CUTLASS_HOST_DEVICE
 int64_t implicit_gemm_tensor_a_size(Operator conv_operator,

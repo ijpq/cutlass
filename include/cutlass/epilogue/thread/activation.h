@@ -145,6 +145,39 @@ struct GELU<Array<T, N>> {
     }
 };
 
+/// Hswish operator
+template <typename T>
+struct HSwish {
+    CUTLASS_HOST_DEVICE
+    T operator()(T const& scale, T const& inv_scale, T const& value) const {
+        T result = value * scale + 3.f;
+        if (result < 0.f) {
+            result = 0;
+        }
+        if (result > 6.f) {
+            result = 6.f;
+        }
+        result = result * (1.f / 6.f) * value;
+        return result;
+    }
+};
+
+template <typename T, int N>
+struct HSwish<Array<T, N>> {
+    CUTLASS_HOST_DEVICE
+    Array<T, N> operator()(T const& scale, T const& inv_scale,
+                           Array<T, N> const& frag) const {
+        Array<T, N> result;
+        HSwish<T> hswish_op;
+
+        CUTLASS_PRAGMA_UNROLL
+        for (int i = 0; i < N; ++i) {
+            result[i] = hswish_op(scale, inv_scale, frag[i]);
+        }
+        return result;
+    }
+};
+
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
 }  // namespace thread

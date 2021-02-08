@@ -41,6 +41,7 @@
 #include "cutlass/conv/convolution.h"
 #include "cutlass/conv/conv2d_problem_size.h"
 #include "cutlass/conv/conv3d_problem_size.h"
+#include "./gemm.h"
 
 namespace cutlass {
 namespace reference {
@@ -55,7 +56,7 @@ template <typename ElementA, typename LayoutA, typename ElementB,
           typename LayoutB, typename ElementC, typename LayoutC,
           typename ElementCompute, typename ElementAccumulator = ElementCompute,
           typename ConvertOp = NumericConverter<ElementC, ElementCompute>,
-          typename InnerProductOp = multiply_add<ElementAccumulator> >
+          typename InnerProductOp = multiply_add<ElementAccumulator>>
 void Conv2dFprop(conv::Conv2dProblemSize problem_size,
                  TensorRef<ElementA, LayoutA> tensor_x,
                  TensorRef<ElementB, LayoutB> tensor_w,
@@ -126,7 +127,7 @@ template <typename ElementA, typename LayoutA, typename ElementB,
           typename LayoutB, typename ElementC, typename LayoutC,
           typename ElementAccumulator, typename ElementCompute,
           typename ConvertOp = NumericConverter<ElementC, ElementCompute>,
-          typename InnerProductOp = multiply_add<ElementAccumulator> >
+          typename InnerProductOp = multiply_add<ElementAccumulator>>
 void Depsep_Fprop(
         cutlass::TensorView<ElementA, LayoutA> tensor_A,
         cutlass::TensorView<ElementB, LayoutB> tensor_B,
@@ -206,7 +207,7 @@ template <typename ElementA, typename LayoutA, typename ElementB,
           typename LayoutB, typename ElementC, typename LayoutC,
           typename ElementCompute, typename ElementAccumulator = ElementCompute,
           typename ConvertOp = NumericConverter<ElementC, ElementCompute>,
-          typename InnerProductOp = multiply_add<ElementAccumulator> >
+          typename InnerProductOp = multiply_add<ElementAccumulator>>
 void Conv2dDgrad(cutlass::conv::Conv2dProblemSize problem_size,
                  TensorRef<ElementA, LayoutA> tensor_dy,
                  TensorRef<ElementB, LayoutB> tensor_w,
@@ -294,7 +295,7 @@ template <typename ElementA, typename LayoutA, typename ElementB,
           typename LayoutB, typename ElementC, typename LayoutC,
           typename ElementCompute, typename ElementAccumulator = ElementCompute,
           typename ConvertOp = NumericConverter<ElementC, ElementCompute>,
-          typename InnerProductOp = multiply_add<ElementAccumulator> >
+          typename InnerProductOp = multiply_add<ElementAccumulator>>
 void Conv2dWgrad(cutlass::conv::Conv2dProblemSize problem_size,
                  TensorRef<ElementA, LayoutA> tensor_dy,
                  TensorRef<ElementB, LayoutB> tensor_x,
@@ -376,7 +377,7 @@ template <typename ElementA, typename LayoutA, typename ElementB,
           typename LayoutB, typename ElementC, typename LayoutC,
           typename ElementCompute, typename ElementAccumulator = ElementCompute,
           typename ConvertOp = NumericConverter<ElementC, ElementCompute>,
-          typename InnerProductOp = multiply_add<ElementAccumulator> >
+          typename InnerProductOp = multiply_add<ElementAccumulator>>
 void Conv2d(conv::Operator convolutional_operator,
             conv::Conv2dProblemSize problem_size,
             TensorRef<ElementA, LayoutA> tensor_A,
@@ -420,7 +421,7 @@ template <typename ElementA, typename LayoutA, typename ElementB,
           typename LayoutB, typename ElementC, typename LayoutC,
           typename ElementCompute, typename ElementAccumulator = ElementCompute,
           typename ConvertOp = NumericConverter<ElementC, ElementCompute>,
-          typename InnerProductOp = multiply_add<ElementAccumulator> >
+          typename InnerProductOp = multiply_add<ElementAccumulator>>
 void Conv3dFprop(conv::Conv3dProblemSize problem_size,
                  TensorRef<ElementA, LayoutA> tensor_x,
                  TensorRef<ElementB, LayoutB> tensor_w,
@@ -511,7 +512,7 @@ template <typename ElementA, typename LayoutA, typename ElementB,
           typename LayoutB, typename ElementC, typename LayoutC,
           typename ElementCompute, typename ElementAccumulator = ElementCompute,
           typename ConvertOp = NumericConverter<ElementC, ElementCompute>,
-          typename InnerProductOp = multiply_add<ElementAccumulator> >
+          typename InnerProductOp = multiply_add<ElementAccumulator>>
 void Conv3dDgrad(cutlass::conv::Conv3dProblemSize problem_size,
                  TensorRef<ElementA, LayoutA> tensor_dy,
                  TensorRef<ElementB, LayoutB> tensor_w,
@@ -615,7 +616,7 @@ template <typename ElementA, typename LayoutA, typename ElementB,
           typename LayoutB, typename ElementC, typename LayoutC,
           typename ElementCompute, typename ElementAccumulator = ElementCompute,
           typename ConvertOp = NumericConverter<ElementC, ElementCompute>,
-          typename InnerProductOp = multiply_add<ElementAccumulator> >
+          typename InnerProductOp = multiply_add<ElementAccumulator>>
 void Conv3dWgrad(cutlass::conv::Conv3dProblemSize problem_size,
                  TensorRef<ElementA, LayoutA> tensor_dy,
                  TensorRef<ElementB, LayoutB> tensor_x,
@@ -717,7 +718,7 @@ template <typename ElementA, typename LayoutA, typename ElementB,
           typename LayoutB, typename ElementC, typename LayoutC,
           typename ElementCompute, typename ElementAccumulator = ElementCompute,
           typename ConvertOp = NumericConverter<ElementC, ElementCompute>,
-          typename InnerProductOp = multiply_add<ElementAccumulator> >
+          typename InnerProductOp = multiply_add<ElementAccumulator>>
 void Conv3d(conv::Operator convolutional_operator,
             conv::Conv3dProblemSize problem_size,
             TensorRef<ElementA, LayoutA> tensor_A,
@@ -751,6 +752,751 @@ void Conv3d(conv::Operator convolutional_operator,
             break;
     }
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Computes a general convolution among tensors of rank=4 pointed
+/// to by TensorRef objects.
+template <conv::ConvType ConvolutionType, typename ElementSrc,
+          typename LayoutSrc, typename ElementFilter, typename LayoutFilter,
+          typename ElementDst, typename LayoutDst, typename ElementBias,
+          typename LayoutBias, typename ScalarType, typename ComputeType,
+          typename InnerProductOp = multiply_add<ComputeType>,
+          typename ConvertOp = NumericConverter<ElementDst, ScalarType>>
+void compute_convolution(conv::Conv2dProblemSize conv_param, ScalarType alpha,
+                         TensorRef<ElementSrc, LayoutSrc> tensor_src,
+                         TensorRef<ElementFilter, LayoutFilter> tensor_filter,
+                         ScalarType beta,
+                         TensorRef<ElementBias, LayoutBias> tensor_bias,
+                         ScalarType gamma,
+                         TensorRef<ElementDst, LayoutDst> tensor_z,
+                         TensorRef<ElementDst, LayoutDst> tensor_dst,
+                         ComputeType initial_accum) {
+    static_assert(LayoutSrc::kRank == 4 && LayoutFilter::kRank == 4 &&
+                          LayoutDst::kRank == 4 && LayoutBias::kRank == 4,
+                  "Tensors must be of rank 4");
+    using TensorCoordSrc = typename LayoutSrc::TensorCoord;
+    using TensorCoordFilter = typename LayoutFilter::TensorCoord;
+    using TensorCoordBias = typename LayoutBias::TensorCoord;
+    using TensorCoordDst = typename LayoutDst::TensorCoord;
+
+    int const N = conv_param.N;
+    int const IC = conv_param.C;
+    int const OC = conv_param.K;
+    int const IH = conv_param.H;
+    int const IW = conv_param.W;
+    int const OH = conv_param.P;
+    int const OW = conv_param.Q;
+    int const FH = conv_param.R;
+    int const FW = conv_param.S;
+    int const PH = conv_param.pad_h;
+    int const PW = conv_param.pad_w;
+    int const SH = conv_param.stride_h;
+    int const SW = conv_param.stride_w;
+
+    // Blocking necessary to speedup reference implementation
+    int const Mblock = 16;
+    int const Nblock = 16;
+
+    ConvertOp convert_op;
+    InnerProductOp inner_product_op;
+
+    for (int n_block = 0; n_block < N; n_block += Nblock) {
+        for (int oc_block = 0; oc_block < OC; oc_block += Mblock) {
+            for (int oh = 0; oh < OH; oh++) {
+                for (int ow = 0; ow < OW; ow++) {
+                    ComputeType accum[Mblock][Nblock];
+
+                    for (int j = 0; j < Nblock; j++) {
+                        for (int i = 0; i < Mblock; i++) {
+                            accum[i][j] = initial_accum;
+                        }
+                    }
+
+                    int ih_base = oh * SH - PH;
+                    int iw_base = ow * SW - PW;
+
+                    for (int fh = 0; fh < FH; fh++) {
+                        for (int fw = 0; fw < FW; fw++) {
+                            for (int ic = 0; ic < IC; ic++) {
+                                for (int j = 0; j < Nblock; j++) {
+                                    for (int i = 0; i < Mblock; i++) {
+                                        int n = n_block + j;
+                                        int oc = oc_block + i;
+
+                                        int ih = ih_base + fh;
+                                        int iw = iw_base + fw;
+                                        if (n < N && oc < OC) {
+                                            ElementSrc src;
+                                            if (ih >= 0 && ih < IH && iw >= 0 &&
+                                                iw < IW) {
+                                                src = tensor_src.at(
+                                                        TensorCoordSrc(n, ih,
+                                                                       iw, ic));
+                                            } else {
+                                                src = 0;
+                                            }
+                                            ElementFilter filter =
+                                                    tensor_filter.at(
+                                                            TensorCoordFilter(
+                                                                    oc, fh, fw,
+                                                                    ic));
+
+                                            ComputeType compute_src(
+                                                    cast_if_scalar<ComputeType>(
+                                                            src));
+                                            ComputeType compute_filter(
+                                                    cast_if_scalar<ComputeType>(
+                                                            filter));
+
+                                            accum[i][j] = inner_product_op(
+                                                    compute_filter, compute_src,
+                                                    accum[i][j]);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    for (int j = 0; j < Nblock; j++) {
+                        for (int i = 0; i < Mblock; i++) {
+                            int n = n_block + j;
+                            int oc = oc_block + i;
+
+                            TensorCoordDst coord(n, oh, ow, oc);
+                            TensorCoordBias coord_bias(0, 0, 0, oc);
+
+                            if (n < N && oc < OC) {
+                                ScalarType intermediate =
+                                        alpha * ScalarType(accum[i][j]) +
+                                        beta * ScalarType(tensor_bias.at(
+                                                       coord_bias)) +
+                                        gamma * ScalarType(tensor_z.at(coord));
+                                if (cutlass::platform::is_same<ScalarType,
+                                                               float>::value &&
+                                    cutlass::platform::is_same<ElementDst,
+                                                               int8_t>::value) {
+                                    intermediate = std::round(intermediate);
+                                }
+                                tensor_dst.at(coord) = convert_op(intermediate);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Computes a general matrix product among matrices (tensors of rank=2) pointed
+/// to by TensorRef objects.
+template <conv::ConvType ConvolutionType, typename ElementSrc,
+          typename LayoutSrc, typename ElementFilter, typename LayoutFilter,
+          typename ElementDst, typename LayoutDst, typename ElementBias,
+          typename LayoutBias, typename ScalarType, typename ComputeType,
+          typename InnerProductOp = multiply_add<ComputeType>,
+          typename ConvertOp = NumericConverter<ElementDst, ScalarType>>
+void compute_convolution(conv::Conv2dProblemSize conv_param, ScalarType alpha,
+                         TensorRef<ElementSrc, LayoutSrc> tensor_src,
+                         TensorRef<ElementFilter, LayoutFilter> tensor_filter,
+                         ScalarType beta,
+                         TensorRef<ElementBias, LayoutBias> tensor_bias,
+                         TensorRef<ElementDst, LayoutDst> tensor_dst,
+                         ComputeType initial_accum) {
+    compute_convolution<ElementSrc, LayoutSrc, ElementFilter, LayoutFilter,
+                        ElementDst, LayoutDst, ScalarType, ComputeType,
+                        InnerProductOp, ConvertOp>(
+            conv_param, alpha, tensor_src, tensor_filter, beta, tensor_bias, 0,
+            tensor_dst, tensor_dst, initial_accum);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Computes a batch convolution among source tensor of rank=4 and
+/// filter tensor of rank=5 pointed to by TensorRef objects.
+template <typename ElementSrc, typename LayoutSrc, typename ElementFilter,
+          typename LayoutFilter, typename ElementDst, typename LayoutDst,
+          typename ElementBias, typename LayoutBias, typename ScalarType,
+          typename ComputeType,
+          typename InnerProductOp = multiply_add<ComputeType>,
+          typename ConvertOp = NumericConverter<ElementDst, ScalarType>>
+void compute_batch_convolution(
+        conv::Conv2dProblemSize conv_param, ScalarType alpha,
+        TensorRef<ElementSrc, LayoutSrc> tensor_src,
+        TensorRef<ElementFilter, LayoutFilter> tensor_filter, ScalarType beta,
+        TensorRef<ElementBias, LayoutBias> tensor_bias, ScalarType gamma,
+        TensorRef<ElementDst, LayoutDst> tensor_z,
+        TensorRef<ElementDst, LayoutDst> tensor_dst,
+        ComputeType initial_accum) {
+    static_assert(LayoutSrc::kRank == 4 && LayoutDst::kRank == 4 &&
+                          LayoutBias::kRank == 4,
+                  "Tensors must be of rank 4");
+    static_assert(LayoutFilter::kRank == 5, "Filter must be of rank 5");
+    using TensorCoordSrc = typename LayoutSrc::TensorCoord;
+    using TensorCoordFilter = typename LayoutFilter::TensorCoord;
+    using TensorCoordBias = typename LayoutBias::TensorCoord;
+    using TensorCoordDst = typename LayoutDst::TensorCoord;
+
+    int const N = conv_param.N;
+    int const IC = conv_param.C;
+    int const OC = conv_param.K;
+    int const IH = conv_param.H;
+    int const IW = conv_param.W;
+    int const OH = conv_param.P;
+    int const OW = conv_param.Q;
+    int const FH = conv_param.R;
+    int const FW = conv_param.S;
+    int const PH = conv_param.pad_h;
+    int const PW = conv_param.pad_w;
+    int const SH = conv_param.stride_h;
+    int const SW = conv_param.stride_w;
+
+    // Blocking necessary to speedup reference implementation
+    int const Mblock = 16;
+    int const Nblock = 16;
+
+    ConvertOp convert_op;
+    InnerProductOp inner_product_op;
+
+    for (int n_block = 0; n_block < N; n_block += Nblock) {
+        for (int oc_block = 0; oc_block < OC; oc_block += Mblock) {
+            for (int oh = 0; oh < OH; oh++) {
+                for (int ow = 0; ow < OW; ow++) {
+                    ComputeType accum[Mblock][Nblock];
+
+                    for (int j = 0; j < Nblock; j++) {
+                        for (int i = 0; i < Mblock; i++) {
+                            accum[i][j] = initial_accum;
+                        }
+                    }
+
+                    int ih_base = oh * SH - PH;
+                    int iw_base = ow * SW - PW;
+
+                    for (int fh = 0; fh < FH; fh++) {
+                        for (int fw = 0; fw < FW; fw++) {
+                            for (int ic = 0; ic < IC; ic++) {
+                                for (int j = 0; j < Nblock; j++) {
+                                    for (int i = 0; i < Mblock; i++) {
+                                        int n = n_block + j;
+                                        int oc = oc_block + i;
+
+                                        int ih = ih_base + fh;
+                                        int iw = iw_base + fw;
+                                        if (n < N && oc < OC) {
+                                            ElementSrc src;
+                                            if (ih >= 0 && ih < IH && iw >= 0 &&
+                                                iw < IW) {
+                                                src = tensor_src.at(
+                                                        TensorCoordSrc(n, ih,
+                                                                       iw, ic));
+                                            } else {
+                                                src = 0;
+                                            }
+                                            ElementFilter filter =
+                                                    tensor_filter.at(
+                                                            TensorCoordFilter(
+                                                                    n, oc, fh,
+                                                                    fw, ic));
+
+                                            ComputeType compute_src(
+                                                    cast_if_scalar<ComputeType>(
+                                                            src));
+                                            ComputeType compute_filter(
+                                                    cast_if_scalar<ComputeType>(
+                                                            filter));
+
+                                            accum[i][j] = inner_product_op(
+                                                    compute_filter, compute_src,
+                                                    accum[i][j]);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    for (int j = 0; j < Nblock; j++) {
+                        for (int i = 0; i < Mblock; i++) {
+                            int n = n_block + j;
+                            int oc = oc_block + i;
+
+                            TensorCoordDst coord(n, oh, ow, oc);
+                            TensorCoordBias coord_bias(0, 0, 0, oc);
+
+                            if (n < N && oc < OC) {
+                                ScalarType intermediate =
+                                        alpha * ScalarType(accum[i][j]) +
+                                        beta * ScalarType(tensor_bias.at(
+                                                       coord_bias)) +
+                                        gamma * ScalarType(tensor_z.at(coord));
+                                if (cutlass::platform::is_same<ScalarType,
+                                                               float>::value &&
+                                    cutlass::platform::is_same<ElementDst,
+                                                               int8_t>::value) {
+                                    intermediate = std::round(intermediate);
+                                }
+                                tensor_dst.at(coord) = convert_op(intermediate);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Computes a batch convolution among source tensor of rank=4 and
+/// filter tensor of rank=5 pointed to by TensorRef objects.
+template <typename ElementSrc, typename LayoutSrc, typename ElementFilter,
+          typename LayoutFilter, typename ElementDst, typename LayoutDst,
+          typename ElementBias, typename LayoutBias, typename ScalarType,
+          typename ComputeType,
+          typename InnerProductOp = multiply_add<ComputeType>,
+          typename ConvertOp = NumericConverter<ElementDst, ScalarType>>
+void compute_batch_convolution(
+        conv::Conv2dProblemSize conv_param, ScalarType alpha,
+        TensorRef<ElementSrc, LayoutSrc> tensor_src,
+        TensorRef<ElementFilter, LayoutFilter> tensor_filter, ScalarType beta,
+        TensorRef<ElementBias, LayoutBias> tensor_bias,
+        TensorRef<ElementDst, LayoutDst> tensor_dst,
+        ComputeType initial_accum) {
+    compute_batch_convolution<ElementSrc, LayoutSrc, ElementFilter,
+                              LayoutFilter, ElementDst, LayoutDst, ScalarType,
+                              ComputeType, InnerProductOp, ConvertOp>(
+            conv_param, alpha, tensor_src, tensor_filter, beta, tensor_bias, 0,
+            tensor_dst, tensor_dst, initial_accum);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+template <conv::ConvType ConvolutionType, typename ElementSrc,
+          typename LayoutSrc, typename ElementFilter, typename LayoutFilter,
+          typename ElementDst, typename LayoutDst, typename ElementBias,
+          typename LayoutBias, typename ScalarType, typename ComputeType,
+          typename InnerProductOp = cutlass::arch::OpMultiplyAdd>
+struct Convolution;
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Normal convolution speicialization
+/// Partial specialization for multiply-add
+template <conv::ConvType ConvolutionType, typename ElementSrc,
+          typename LayoutSrc, typename ElementFilter, typename LayoutFilter,
+          typename ElementDst, typename LayoutDst, typename ElementBias,
+          typename LayoutBias, typename ScalarType, typename ComputeType>
+struct Convolution<ConvolutionType, ElementSrc, LayoutSrc, ElementFilter,
+                   LayoutFilter, ElementDst, LayoutDst, ElementBias, LayoutBias,
+                   ScalarType, ComputeType, arch::OpMultiplyAdd> {
+    void operator()(conv::Conv2dProblemSize conv_param, ScalarType alpha,
+                    TensorRef<ElementSrc, LayoutSrc> tensor_src,
+                    TensorRef<ElementFilter, LayoutFilter> tensor_filter,
+                    ScalarType beta,
+                    TensorRef<ElementBias, LayoutBias> tensor_bias,
+                    TensorRef<ElementDst, LayoutDst> tensor_dst,
+                    ComputeType initial_accum = ComputeType(0)) {
+        static_assert(LayoutSrc::kRank == 4 && LayoutFilter::kRank == 4 &&
+                              LayoutDst::kRank == 4 && LayoutBias::kRank == 4,
+                      "Tensors must be of rank 4");
+
+        compute_convolution<ConvolutionType, ElementSrc, LayoutSrc,
+                            ElementFilter, LayoutFilter, ElementDst, LayoutDst,
+                            ElementBias, LayoutBias, ScalarType, ComputeType,
+                            multiply_add<ComputeType>>(
+                conv_param, alpha, tensor_src, tensor_filter, beta, tensor_bias,
+                tensor_dst, initial_accum);
+    }
+
+    void operator()(conv::Conv2dProblemSize conv_param, ScalarType alpha,
+                    TensorRef<ElementSrc, LayoutSrc> tensor_src,
+                    TensorRef<ElementFilter, LayoutFilter> tensor_filter,
+                    ScalarType beta,
+                    TensorRef<ElementBias, LayoutBias> tensor_bias,
+                    ScalarType gamma, TensorRef<ElementDst, LayoutDst> tensor_z,
+                    TensorRef<ElementDst, LayoutDst> tensor_dst,
+                    ComputeType initial_accum = ComputeType(0)) {
+        static_assert(LayoutSrc::kRank == 4 && LayoutFilter::kRank == 4 &&
+                              LayoutDst::kRank == 4 && LayoutBias::kRank == 4,
+                      "Tensors must be of rank 4");
+
+        compute_convolution<ConvolutionType, ElementSrc, LayoutSrc,
+                            ElementFilter, LayoutFilter, ElementDst, LayoutDst,
+                            ElementBias, LayoutBias, ScalarType, ComputeType,
+                            multiply_add<ComputeType>>(
+                conv_param, alpha, tensor_src, tensor_filter, beta, tensor_bias,
+                gamma, tensor_z, tensor_dst, initial_accum);
+    }
+};
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Partial specialization for multiply-add-saturate
+template <conv::ConvType ConvolutionType, typename ElementSrc,
+          typename LayoutSrc, typename ElementFilter, typename LayoutFilter,
+          typename ElementDst, typename LayoutDst, typename ElementBias,
+          typename LayoutBias, typename ScalarType, typename ComputeType>
+struct Convolution<ConvolutionType, ElementSrc, LayoutSrc, ElementFilter,
+                   LayoutFilter, ElementDst, LayoutDst, ElementBias, LayoutBias,
+                   ScalarType, ComputeType, arch::OpMultiplyAddSaturate> {
+    void operator()(conv::Conv2dProblemSize conv_param, ScalarType alpha,
+                    TensorRef<ElementSrc, LayoutSrc> tensor_src,
+                    TensorRef<ElementFilter, LayoutFilter> tensor_filter,
+                    ScalarType beta,
+                    TensorRef<ElementBias, LayoutBias> tensor_bias,
+                    TensorRef<ElementDst, LayoutDst> tensor_dst,
+                    ComputeType initial_accum = ComputeType(0)) {
+        static_assert(LayoutSrc::kRank == 4 && LayoutFilter::kRank == 4 &&
+                              LayoutDst::kRank == 4 && LayoutBias::kRank == 4,
+                      "Tensors must be of rank 4");
+
+        compute_convolution<ConvolutionType, ElementSrc, LayoutSrc,
+                            ElementFilter, LayoutFilter, ElementDst, LayoutDst,
+                            ElementBias, LayoutBias, ScalarType, ComputeType,
+                            multiply_add<ComputeType>,
+                            NumericConverterClamp<ElementDst, ScalarType>>(
+                conv_param, alpha, tensor_src, tensor_filter, beta, tensor_bias,
+                tensor_dst, initial_accum);
+    }
+
+    void operator()(conv::Conv2dProblemSize conv_param, ScalarType alpha,
+                    TensorRef<ElementSrc, LayoutSrc> tensor_src,
+                    TensorRef<ElementFilter, LayoutFilter> tensor_filter,
+                    ScalarType beta,
+                    TensorRef<ElementBias, LayoutBias> tensor_bias,
+                    ScalarType gamma, TensorRef<ElementDst, LayoutDst> tensor_z,
+                    TensorRef<ElementDst, LayoutDst> tensor_dst,
+                    ComputeType initial_accum = ComputeType(0)) {
+        static_assert(LayoutSrc::kRank == 4 && LayoutFilter::kRank == 4 &&
+                              LayoutDst::kRank == 4 && LayoutBias::kRank == 4,
+                      "Tensors must be of rank 4");
+
+        compute_convolution<ConvolutionType, ElementSrc, LayoutSrc,
+                            ElementFilter, LayoutFilter, ElementDst, LayoutDst,
+                            ElementBias, LayoutBias, ScalarType, ComputeType,
+                            multiply_add<ComputeType>,
+                            NumericConverterClamp<ElementDst, ScalarType>>(
+                conv_param, alpha, tensor_src, tensor_filter, beta, tensor_bias,
+                gamma, tensor_z, tensor_dst, initial_accum);
+    }
+};
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Parital specialization for XOR-popc
+template <conv::ConvType ConvolutionType, typename ElementSrc,
+          typename LayoutSrc, typename ElementFilter, typename LayoutFilter,
+          typename ElementDst, typename LayoutDst, typename ElementBias,
+          typename LayoutBias, typename ScalarType, typename ComputeType>
+struct Convolution<ConvolutionType, ElementSrc, LayoutSrc, ElementFilter,
+                   LayoutFilter, ElementDst, LayoutDst, ElementBias, LayoutBias,
+                   ScalarType, ComputeType, arch::OpXorPopc> {
+    void operator()(conv::Conv2dProblemSize conv_param, ScalarType alpha,
+                    TensorRef<ElementSrc, LayoutSrc> tensor_src,
+                    TensorRef<ElementFilter, LayoutFilter> tensor_filter,
+                    ScalarType beta,
+                    TensorRef<ElementBias, LayoutBias> tensor_bias,
+                    TensorRef<ElementDst, LayoutDst> tensor_dst,
+                    ComputeType initial_accum = ComputeType(0)) {
+        static_assert(LayoutSrc::kRank == 4 && LayoutFilter::kRank == 4 &&
+                              LayoutDst::kRank == 4 && LayoutBias::kRank == 4,
+                      "Tensors must be of rank 4");
+
+        compute_convolution<ConvolutionType, ElementSrc, LayoutSrc,
+                            ElementFilter, LayoutFilter, ElementDst, LayoutDst,
+                            ElementBias, LayoutBias, ScalarType, ComputeType,
+                            xor_add<ComputeType>>(
+                conv_param, alpha, tensor_src, tensor_filter, beta, tensor_bias,
+                tensor_dst, initial_accum);
+    }
+
+    void operator()(conv::Conv2dProblemSize conv_param, ScalarType alpha,
+                    TensorRef<ElementSrc, LayoutSrc> tensor_src,
+                    TensorRef<ElementFilter, LayoutFilter> tensor_filter,
+                    ScalarType beta,
+                    TensorRef<ElementBias, LayoutBias> tensor_bias,
+                    ScalarType gamma, TensorRef<ElementDst, LayoutDst> tensor_z,
+                    TensorRef<ElementDst, LayoutDst> tensor_dst,
+                    ComputeType initial_accum = ComputeType(0)) {
+        static_assert(LayoutSrc::kRank == 4 && LayoutFilter::kRank == 4 &&
+                              LayoutDst::kRank == 4 && LayoutBias::kRank == 4,
+                      "Tensors must be of rank 4");
+
+        compute_convolution<ConvolutionType, ElementSrc, LayoutSrc,
+                            ElementFilter, LayoutFilter, ElementDst, LayoutDst,
+                            ElementBias, LayoutBias, ScalarType, ComputeType,
+                            xor_add<ComputeType>>(
+                conv_param, alpha, tensor_src, tensor_filter, beta, tensor_bias,
+                gamma, tensor_z, tensor_dst, initial_accum);
+    }
+};
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Batch convolution speicialization
+/// Partial specialization for multiply-add
+template <typename ElementSrc, typename LayoutSrc, typename ElementFilter,
+          typename LayoutFilter, typename ElementDst, typename LayoutDst,
+          typename ElementBias, typename LayoutBias, typename ScalarType,
+          typename ComputeType>
+struct Convolution<conv::ConvType::kBatchConvolution, ElementSrc, LayoutSrc,
+                   ElementFilter, LayoutFilter, ElementDst, LayoutDst,
+                   ElementBias, LayoutBias, ScalarType, ComputeType,
+                   arch::OpMultiplyAdd> {
+    void operator()(conv::Conv2dProblemSize conv_param, ScalarType alpha,
+                    TensorRef<ElementSrc, LayoutSrc> tensor_src,
+                    TensorRef<ElementFilter, LayoutFilter> tensor_filter,
+                    ScalarType beta,
+                    TensorRef<ElementBias, LayoutBias> tensor_bias,
+                    TensorRef<ElementDst, LayoutDst> tensor_dst,
+                    ComputeType initial_accum = ComputeType(0)) {
+        static_assert(LayoutSrc::kRank == 4 && LayoutDst::kRank == 4 &&
+                              LayoutBias::kRank == 4,
+                      "Tensors must be of rank 4");
+        static_assert(LayoutFilter::kRank == 5, "Filter must be of rank 5");
+
+        compute_batch_convolution<ElementSrc, LayoutSrc, ElementFilter,
+                                  LayoutFilter, ElementDst, LayoutDst,
+                                  ElementBias, LayoutBias, ScalarType,
+                                  ComputeType, multiply_add<ComputeType>>(
+                conv_param, alpha, tensor_src, tensor_filter, beta, tensor_bias,
+                tensor_dst, initial_accum);
+    }
+
+    void operator()(conv::Conv2dProblemSize conv_param, ScalarType alpha,
+                    TensorRef<ElementSrc, LayoutSrc> tensor_src,
+                    TensorRef<ElementFilter, LayoutFilter> tensor_filter,
+                    ScalarType beta,
+                    TensorRef<ElementBias, LayoutBias> tensor_bias,
+                    ScalarType gamma, TensorRef<ElementDst, LayoutDst> tensor_z,
+                    TensorRef<ElementDst, LayoutDst> tensor_dst,
+                    ComputeType initial_accum = ComputeType(0)) {
+        static_assert(LayoutSrc::kRank == 4 && LayoutDst::kRank == 4 &&
+                              LayoutBias::kRank == 4,
+                      "Tensors must be of rank 4");
+        static_assert(LayoutFilter::kRank == 5, "Filter must be of rank 5");
+
+        compute_batch_convolution<ElementSrc, LayoutSrc, ElementFilter,
+                                  LayoutFilter, ElementDst, LayoutDst,
+                                  ElementBias, LayoutBias, ScalarType,
+                                  ComputeType, multiply_add<ComputeType>>(
+                conv_param, alpha, tensor_src, tensor_filter, beta, tensor_bias,
+                gamma, tensor_z, tensor_dst, initial_accum);
+    }
+};
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Partial specialization for multiply-add-saturate
+template <typename ElementSrc, typename LayoutSrc, typename ElementFilter,
+          typename LayoutFilter, typename ElementDst, typename LayoutDst,
+          typename ElementBias, typename LayoutBias, typename ScalarType,
+          typename ComputeType>
+struct Convolution<conv::ConvType::kBatchConvolution, ElementSrc, LayoutSrc,
+                   ElementFilter, LayoutFilter, ElementDst, LayoutDst,
+                   ElementBias, LayoutBias, ScalarType, ComputeType,
+                   arch::OpMultiplyAddSaturate> {
+    void operator()(conv::Conv2dProblemSize conv_param, ScalarType alpha,
+                    TensorRef<ElementSrc, LayoutSrc> tensor_src,
+                    TensorRef<ElementFilter, LayoutFilter> tensor_filter,
+                    ScalarType beta,
+                    TensorRef<ElementBias, LayoutBias> tensor_bias,
+                    TensorRef<ElementDst, LayoutDst> tensor_dst,
+                    ComputeType initial_accum = ComputeType(0)) {
+        static_assert(LayoutSrc::kRank == 4 && LayoutDst::kRank == 4 &&
+                              LayoutBias::kRank == 4,
+                      "Tensors must be of rank 4");
+        static_assert(LayoutFilter::kRank == 5, "Filter must be of rank 5");
+
+        compute_batch_convolution<
+                ElementSrc, LayoutSrc, ElementFilter, LayoutFilter, ElementDst,
+                LayoutDst, ElementBias, LayoutBias, ScalarType, ComputeType,
+                multiply_add<ComputeType>,
+                NumericConverterClamp<ElementDst, ScalarType>>(
+                conv_param, alpha, tensor_src, tensor_filter, beta, tensor_bias,
+                tensor_dst, initial_accum);
+    }
+
+    void operator()(conv::Conv2dProblemSize conv_param, ScalarType alpha,
+                    TensorRef<ElementSrc, LayoutSrc> tensor_src,
+                    TensorRef<ElementFilter, LayoutFilter> tensor_filter,
+                    ScalarType beta,
+                    TensorRef<ElementBias, LayoutBias> tensor_bias,
+                    ScalarType gamma, TensorRef<ElementDst, LayoutDst> tensor_z,
+                    TensorRef<ElementDst, LayoutDst> tensor_dst,
+                    ComputeType initial_accum = ComputeType(0)) {
+        static_assert(LayoutSrc::kRank == 4 && LayoutDst::kRank == 4 &&
+                              LayoutBias::kRank == 4,
+                      "Tensors must be of rank 4");
+        static_assert(LayoutFilter::kRank == 5, "Filter must be of rank 5");
+
+        compute_batch_convolution<
+                ElementSrc, LayoutSrc, ElementFilter, LayoutFilter, ElementDst,
+                LayoutDst, ElementBias, LayoutBias, ScalarType, ComputeType,
+                multiply_add<ComputeType>,
+                NumericConverterClamp<ElementDst, ScalarType>>(
+                conv_param, alpha, tensor_src, tensor_filter, beta, tensor_bias,
+                gamma, tensor_z, tensor_dst, initial_accum);
+    }
+};
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Parital specialization for XOR-popc
+template <typename ElementSrc, typename LayoutSrc, typename ElementFilter,
+          typename LayoutFilter, typename ElementDst, typename LayoutDst,
+          typename ElementBias, typename LayoutBias, typename ScalarType,
+          typename ComputeType>
+struct Convolution<conv::ConvType::kBatchConvolution, ElementSrc, LayoutSrc,
+                   ElementFilter, LayoutFilter, ElementDst, LayoutDst,
+                   ElementBias, LayoutBias, ScalarType, ComputeType,
+                   arch::OpXorPopc> {
+    void operator()(conv::Conv2dProblemSize conv_param, ScalarType alpha,
+                    TensorRef<ElementSrc, LayoutSrc> tensor_src,
+                    TensorRef<ElementFilter, LayoutFilter> tensor_filter,
+                    ScalarType beta,
+                    TensorRef<ElementBias, LayoutBias> tensor_bias,
+                    TensorRef<ElementDst, LayoutDst> tensor_dst,
+                    ComputeType initial_accum = ComputeType(0)) {
+        static_assert(LayoutSrc::kRank == 4 && LayoutDst::kRank == 4 &&
+                              LayoutBias::kRank == 4,
+                      "Tensors must be of rank 4");
+        static_assert(LayoutFilter::kRank == 5, "Filter must be of rank 5");
+
+        compute_batch_convolution<ElementSrc, LayoutSrc, ElementFilter,
+                                  LayoutFilter, ElementDst, LayoutDst,
+                                  ElementBias, LayoutBias, ScalarType,
+                                  ComputeType, xor_add<ComputeType>>(
+                conv_param, alpha, tensor_src, tensor_filter, beta, tensor_bias,
+                tensor_dst, initial_accum);
+    }
+
+    void operator()(conv::Conv2dProblemSize conv_param, ScalarType alpha,
+                    TensorRef<ElementSrc, LayoutSrc> tensor_src,
+                    TensorRef<ElementFilter, LayoutFilter> tensor_filter,
+                    ScalarType beta,
+                    TensorRef<ElementBias, LayoutBias> tensor_bias,
+                    ScalarType gamma, TensorRef<ElementDst, LayoutDst> tensor_z,
+                    TensorRef<ElementDst, LayoutDst> tensor_dst,
+                    ComputeType initial_accum = ComputeType(0)) {
+        static_assert(LayoutSrc::kRank == 4 && LayoutDst::kRank == 4 &&
+                              LayoutBias::kRank == 4,
+                      "Tensors must be of rank 4");
+        static_assert(LayoutFilter::kRank == 5, "Filter must be of rank 5");
+
+        compute_batch_convolution<ElementSrc, LayoutSrc, ElementFilter,
+                                  LayoutFilter, ElementDst, LayoutDst,
+                                  ElementBias, LayoutBias, ScalarType,
+                                  ComputeType, xor_add<ComputeType>>(
+                conv_param, alpha, tensor_src, tensor_filter, beta, tensor_bias,
+                gamma, tensor_z, tensor_dst, initial_accum);
+    }
+};
+
+template <typename ElementSrc, typename LayoutSrc, typename ElementFilter,
+          typename LayoutFilter, typename ElementDst, typename LayoutDst,
+          typename ElementBias, typename LayoutBias, typename ScalarType,
+          typename ComputeType,
+          typename InnerProductOp = multiply_add<ComputeType>,
+          typename ConvertOp = NumericConverterClamp<ElementDst, ScalarType>>
+struct Deconvolution {
+    void operator()(conv::Conv2dProblemSize problem_size, ScalarType alpha,
+                    TensorRef<ElementSrc, LayoutSrc> tensor_src,
+                    TensorRef<ElementFilter, LayoutFilter> tensor_filter,
+                    ScalarType beta,
+                    TensorRef<ElementBias, LayoutBias> tensor_bias,
+                    ScalarType gamma, TensorRef<ElementDst, LayoutDst> tensor_z,
+                    TensorRef<ElementDst, LayoutDst> tensor_dst,
+                    ComputeType initial_accum = ComputeType(0)) {
+        ConvertOp convert_op;
+        InnerProductOp inner_product_op;
+
+        // Apply MMA and accumulate ComputeType
+        for (int n = 0; n < problem_size.N; ++n) {
+            for (int h = 0; h < problem_size.H; ++h) {
+                for (int w = 0; w < problem_size.W; ++w) {
+                    for (int c = 0; c < problem_size.C; ++c) {
+                        ComputeType acc = initial_accum;
+
+                        for (int r = 0; r < problem_size.R; ++r) {
+                            for (int s = 0; s < problem_size.S; ++s) {
+                                for (int k = 0; k < problem_size.K; ++k) {
+                                    int filter_r = r;
+                                    int filter_s = s;
+
+                                    if (problem_size.mode ==
+                                        cutlass::conv::Mode::kConvolution) {
+                                        filter_r = problem_size.R - 1 - r;
+                                        filter_s = problem_size.S - 1 - s;
+                                    }
+
+                                    int p = h + problem_size.pad_h -
+                                            filter_r * problem_size.dilation_h;
+                                    int q = w + problem_size.pad_w -
+                                            filter_s * problem_size.dilation_w;
+
+                                    if (p >= 0 &&
+                                        (p % problem_size.stride_h) == 0 &&
+                                        q >= 0 &&
+                                        (q % problem_size.stride_w) == 0) {
+                                        p = p / problem_size.stride_h;
+                                        q = q / problem_size.stride_w;
+
+                                        if (p < problem_size.P &&
+                                            q < problem_size.Q) {
+                                            ElementSrc a = tensor_src.at(
+                                                    cutlass::make_Coord(n, p, q,
+                                                                        k));
+                                            ElementFilter b = tensor_filter.at(
+                                                    cutlass::make_Coord(k, r, s,
+                                                                        c));
+
+                                            acc = inner_product_op(
+                                                    ComputeType(a),
+                                                    ComputeType(b), acc);
+                                        }
+                                    }
+
+                                }  // for (K)
+                            }      // for (S)
+                        }          // for (R)
+
+                        ElementBias bias_ref = ElementBias();
+
+                        if (beta != ScalarType()) {
+                            bias_ref = tensor_bias.at(
+                                    cutlass::make_Coord(0, 0, 0, c));
+                        }
+                        ElementDst c_ref = ElementDst();
+
+                        if (gamma != ScalarType()) {
+                            c_ref = tensor_z.at(
+                                    cutlass::make_Coord(n, h, w, c));
+                        }
+
+                        ScalarType intermediate = alpha * ScalarType(acc) +
+                                                  beta * ScalarType(bias_ref) +
+                                                  gamma * ScalarType(c_ref);
+                        if (cutlass::platform::is_same<ScalarType,
+                                                       float>::value &&
+                            cutlass::platform::is_same<ElementDst,
+                                                       int8_t>::value) {
+                            intermediate = std::round(intermediate);
+                        }
+
+                        tensor_dst.at(cutlass::make_Coord(n, h, w, c)) =
+                                convert_op(intermediate);
+
+                    }  // for (C)
+                }      // for (W)
+            }          // for (H)
+        }              // for (N)
+    }
+};
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 

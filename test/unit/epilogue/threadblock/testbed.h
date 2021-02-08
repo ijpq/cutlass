@@ -194,8 +194,8 @@ public:
     }
 
     bool run_all() {
-        double alpha_values[] = {1, 0, 2.25};
-        double beta_values[] = {0, 1, -1.25};
+        double alpha_values[] = {1, 0, 2.0};
+        double beta_values[] = {0, 1, -1.0};
 
         // Test runtime explodes if we tried to test every case exhaustively.
         // This tests the full output tile and several smaller sizes to stress

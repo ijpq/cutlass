@@ -9,17 +9,27 @@ stages:
     variables:
       - $CI_MERGE_REQUEST_TITLE =~ /WIP/
       - $CI_MERGE_REQUEST_LABELS =~ /(^|,)no-ci($|,)/
+  before_script:
+    - export REPO_NAME=`echo $CI_PROJECT_URL|sed 's/.*:\/\///g;'`
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY_WS2" | tr -d '\r' | ssh-add -
+    - echo "$SSH_PRIVATE_KEY_ENGINE_CI1" | tr -d '\r' | ssh-add -
+    - echo "$SSH_PRIVATE_KEY_ENGINE_CI2" | tr -d '\r' | ssh-add -
+    - echo "$SSH_PRIVATE_KEY_ENGINE_CI1" > ~/.ssh/engine-ci
+    - echo "$SSH_PRIVATE_KEY_ENGINE_CI2" > ~/.ssh/id_rsa
+    - chmod 400 ~/.ssh/engine-ci
+    - chmod 400 ~/.ssh/id_rsa
 
 .rjob_settings:
   rjob_common: &rjob_common_variables
     CHARGED_GROUP: engine_ci
     MACHINE_GROUP: engine_ci
-    DOCKER_IMAGE: _engine_ci/megbrain_ci_v1_3_1
+    DOCKER_IMAGE: _engine_ci/cutlass_ci_v1_3_2
     EXPECTED_CPU: 32
     EXPECTED_GPU: 1
     EXPECTED_MEMORY: 61440
     POSITIVE_TAGS: 2080ti
-
+  
 check:
   stage: check
   tags:
@@ -32,24 +42,28 @@ check:
     variables:
       - $CI_MERGE_REQUEST_LABELS =~ /(^|,)release($|,)/
 
-test:
+cutlass_convolution_test:
   <<: *rjob_common
   stage: test
   variables:
     <<: *rjob_common_variables
   tags:
     - cutlass-rjob-hhc
-  before_script:
-    - export REPO_NAME=`echo $CI_PROJECT_URL|sed 's/.*:\/\///g;'`
-    - eval $(ssh-agent -s)
-    - echo "$SSH_PRIVATE_KEY_WS2" | tr -d '\r' | ssh-add -
-    - echo "$SSH_PRIVATE_KEY_ENGINE_CI1" | tr -d '\r' | ssh-add -
-    - echo "$SSH_PRIVATE_KEY_ENGINE_CI2" | tr -d '\r' | ssh-add -
-    - echo "$SSH_PRIVATE_KEY_ENGINE_CI1" > ~/.ssh/engine-ci
-    - echo "$SSH_PRIVATE_KEY_ENGINE_CI2" > ~/.ssh/id_rsa
-    - chmod 400 ~/.ssh/engine-ci
-    - chmod 400 ~/.ssh/id_rsa
   script:
     - source ./ci/setup_cuda.sh
     - ./ci/cmake_cutlass.sh
-    - ./ci/run_cutlass_test.sh 
+    - ./ci/run_cutlass_convolution_test.sh
+
+cutlass_test:
+  <<: *rjob_common
+  stage: test
+  variables:
+    <<: *rjob_common_variables
+  tags:
+    - cutlass-rjob-hhc
+  script:
+    - source ./ci/setup_cuda.sh
+    - ./ci/cmake_cutlass.sh
+    - ./ci/run_cutlass_test.sh
+
+

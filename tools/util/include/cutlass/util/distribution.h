@@ -40,7 +40,7 @@ namespace cutlass {
 /// Distribution type
 struct Distribution {
     /// Variant types
-    enum Kind { Invalid, Uniform, Gaussian, Identity, Sequential };
+    enum Kind { Invalid, Constant, Uniform, Gaussian, Identity, Sequential };
 
     /// Distribution state
     union {
@@ -61,6 +61,10 @@ struct Distribution {
             double start;
             double delta;
         } sequential;
+
+        struct {
+            double constant;
+        } constant;
     };
 
     /// Active variant kind
@@ -74,6 +78,14 @@ struct Distribution {
     //
 
     Distribution() : kind(Invalid), int_scale(0) {}
+
+    /// Configures distribution as constant value
+    Distribution& set_constant(double _constant, int _int_scale = 0) {
+        kind = Constant;
+        constant.constant = _constant;
+        int_scale = _int_scale;
+        return *this;
+    }
 
     /// Configures distribution as uniform random
     Distribution& set_uniform(double _min, double _max, int _int_scale = 0) {

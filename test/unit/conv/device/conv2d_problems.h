@@ -151,7 +151,8 @@ struct TestbedConv2dProblemSizes {
             Conv2dProblemVector filtered;
 
             for (cutlass::conv::Conv2dProblemSize const& problem : *problems) {
-                if (!(problem.C % minimum_channel_size)) {
+                if ((!(problem.C % minimum_channel_size)) &&
+                    (!(problem.K % minimum_channel_size))) {
                     filtered.push_back(problem);
                 }
             }
@@ -170,50 +171,56 @@ struct TestbedConv2dProblemSizes {
 
         conv2d_default_sizes.push_back(cutlass::conv::Conv2dProblemSize(
                 {1, 8, 8, minimum_channel_size},  // input size  (NHWC)
-                {8, 3, 3, minimum_channel_size},  // filter size (KRSC)
-                {1, 1, 1, 1},  // padding (pad_h, _, pad_w, _)
-                {1, 1},        // stride (stride_h, stride_w)
-                {1, 1}         // dilation (dilation_h, dilation_w)
+                {minimum_channel_size, 3, 3,
+                 minimum_channel_size},  // filter size (KRSC)
+                {1, 1, 1, 1},            // padding (pad_h, _, pad_w, _)
+                {1, 1},                  // stride (stride_h, stride_w)
+                {1, 1}                   // dilation (dilation_h, dilation_w)
                 ));
 
         conv2d_default_sizes.push_back(cutlass::conv::Conv2dProblemSize(
                 {1, 8, 8, minimum_channel_size},  // input size  (NHWC)
-                {8, 4, 4, minimum_channel_size},  // filter size (KRSC)
-                {1, 1, 1, 1},  // padding (pad_h, _, pad_w, _)
-                {1, 1},        // stride (stride_h, stride_w)
-                {1, 1}         // dilation (dilation_h, dilation_w)
+                {minimum_channel_size, 4, 4,
+                 minimum_channel_size},  // filter size (KRSC)
+                {1, 1, 1, 1},            // padding (pad_h, _, pad_w, _)
+                {1, 1},                  // stride (stride_h, stride_w)
+                {1, 1}                   // dilation (dilation_h, dilation_w)
                 ));
 
         conv2d_default_sizes.push_back(cutlass::conv::Conv2dProblemSize(
                 {1, 8, 8, minimum_channel_size},  // input size  (NHWC)
-                {8, 5, 5, minimum_channel_size},  // filter size (KRSC)
-                {1, 1, 1, 1},  // padding (pad_h, _, pad_w, _)
-                {1, 1},        // stride (stride_h, stride_w)
-                {1, 1}         // dilation (dilation_h, dilation_w)
+                {minimum_channel_size, 5, 5,
+                 minimum_channel_size},  // filter size (KRSC)
+                {1, 1, 1, 1},            // padding (pad_h, _, pad_w, _)
+                {1, 1},                  // stride (stride_h, stride_w)
+                {1, 1}                   // dilation (dilation_h, dilation_w)
                 ));
 
         conv2d_default_sizes.push_back(cutlass::conv::Conv2dProblemSize(
                 {1, 8, 8, minimum_channel_size},  // input size  (NHWC)
-                {8, 6, 5, minimum_channel_size},  // filter size (KRSC)
-                {1, 1, 1, 1},  // padding (pad_h, _, pad_w, _)
-                {1, 1},        // stride (stride_h, stride_w)
-                {1, 1}         // dilation (dilation_h, dilation_w)
+                {minimum_channel_size, 6, 5,
+                 minimum_channel_size},  // filter size (KRSC)
+                {1, 1, 1, 1},            // padding (pad_h, _, pad_w, _)
+                {1, 1},                  // stride (stride_h, stride_w)
+                {1, 1}                   // dilation (dilation_h, dilation_w)
                 ));
 
         conv2d_default_sizes.push_back(cutlass::conv::Conv2dProblemSize(
                 {1, 8, 8, minimum_channel_size},  // input size  (NHWC)
-                {8, 6, 6, minimum_channel_size},  // filter size (KRSC)
-                {1, 1, 1, 1},  // padding (pad_h, _, pad_w, _)
-                {1, 1},        // stride (stride_h, stride_w)
-                {1, 1}         // dilation (dilation_h, dilation_w)
+                {minimum_channel_size, 6, 6,
+                 minimum_channel_size},  // filter size (KRSC)
+                {1, 1, 1, 1},            // padding (pad_h, _, pad_w, _)
+                {1, 1},                  // stride (stride_h, stride_w)
+                {1, 1}                   // dilation (dilation_h, dilation_w)
                 ));
 
         conv2d_default_sizes.push_back(cutlass::conv::Conv2dProblemSize(
                 {1, 8, 8, minimum_channel_size},  // input size  (NHWC)
-                {8, 7, 7, minimum_channel_size},  // filter size (KRSC)
-                {1, 1, 1, 1},  // padding (pad_h, _, pad_w, _)
-                {1, 1},        // stride (stride_h, stride_w)
-                {1, 1}         // dilation (dilation_h, dilation_w)
+                {minimum_channel_size, 7, 7,
+                 minimum_channel_size},  // filter size (KRSC)
+                {1, 1, 1, 1},            // padding (pad_h, _, pad_w, _)
+                {1, 1},                  // stride (stride_h, stride_w)
+                {1, 1}                   // dilation (dilation_h, dilation_w)
                 ));
 
         ////////////////////////////////////////////////////////////////////////////////////

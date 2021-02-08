@@ -54,34 +54,36 @@ namespace warp {
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Fragment iterator for SIMT accumulator arrangements
-template <typename WarpShape,     ///< shape of warp-level GEMM (concept:
-                                  ///< MatrixShape)
-          typename Operator,      ///< matrix multiply operation (concept:
-                                  ///< arch::Mma)
-          typename Layout,        ///< target shared memory layout
-          typename MmaSimtPolicy  ///< policy defining lane arrangement
-                                  ///< (concept: MmaSimtPolicy)
+template <typename WarpShape,      ///< shape of warp-level GEMM (concept:
+                                   ///< MatrixShape)
+          typename Operator,       ///< matrix multiply operation (concept:
+                                   ///< arch::Mma)
+          typename Layout,         ///< target shared memory layout
+          typename MmaSimtPolicy,  ///< policy defining lane arrangement
+                                   ///< (concept: MmaSimtPolicy)
+          typename Policy = SimtPolicy<WarpShape, Operator, Layout,
+                                       MmaSimtPolicy>  ///< Policy
           >
 class FragmentIteratorSimt;
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Partial specialization for row-major shared memory
-template <typename WarpShape_,     ///< shape of the warp-level GEMM tile
-          typename Operator_,      ///< matrix multiply operator (concept:
-                                   ///< arch::Mma)
-          typename MmaSimtPolicy_  ///< policy defining lane arrangement
-                                   ///< (concept: MmaSimtPolicy)
-          >
-class FragmentIteratorSimt<WarpShape_, Operator_, layout::RowMajor,
-                           MmaSimtPolicy_> {
+template <typename WarpShape_,      ///< shape of the warp-level GEMM tile
+          typename Operator_,       ///< matrix multiply operator (concept:
+                                    ///< arch::Mma)
+          typename Layout_,         ///< target shared memory layout
+          typename MmaSimtPolicy_,  ///< policy defining lane arrangement
+                                    ///< (concept: MmaSimtPolicy)
+          typename Policy_>
+class FragmentIteratorSimt {
 public:
     using WarpShape = WarpShape_;
     using Operator = Operator_;
-    using Layout = layout::RowMajor;
+    using Layout = Layout_;
 
     /// Policy for warp-level epilogue components
-    using Policy = SimtPolicy<WarpShape, Operator, Layout, MmaSimtPolicy_>;
+    using Policy = Policy_;
 
     /// This is the fragment size produced by one access of the iterator.
     using Fragment =

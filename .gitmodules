@@ -1,0 +1,3 @@
+[submodule "third-party/gtest-parallel"]
+	path = third-party/gtest-parallel
+	url = git@git-core.megvii-inc.com:third-party/gtest-parallel.git

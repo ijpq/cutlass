@@ -15,12 +15,12 @@ namespace threadblock {
 
 template <typename TensorLayout_,  ///! The original output tensor layout
           typename OutputIteratorLayout_,  ///! Layout used by epilogue output
-                                           ///iterator
+                                           /// iterator
           typename TensorRef_,  ///! Input tensor to epilogue output iterator
           conv::Operator ConvOperator,  ///! Convolutional operator (Fprop,
-                                        ///Dgrad, Wgrad)
+                                        /// Dgrad, Wgrad)
           typename ConvProblemSize_     ///! Convolutional operator on 2D or 3D
-                                        ///problem
+                                        /// problem
           >
 struct ConvOutputIteratorParameter {
     using TensorLayout = TensorLayout_;
@@ -73,7 +73,9 @@ struct ConvOutputIteratorParameter<layout::TensorNCxHWx<InterleavedK>,
 
     CUTLASS_HOST_DEVICE
     static OutputTensorCoord extent(ConvProblemSize problem_size) {
-        return problem_size.output_extent();
+        // return problem_size.output_extent();
+        return implicit_gemm_tensor_c_extent(kConvolutionalOperator,
+                                             problem_size);
     }
 };
 

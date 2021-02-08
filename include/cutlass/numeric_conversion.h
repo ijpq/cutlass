@@ -50,8 +50,10 @@ enum class FloatRoundStyle {
     round_toward_neg_infinity,  ///< round toward negative infinity
     round_half_ulp_truncate,    ///< add 0.5ulp to integer representation then
                                 ///< round toward zero
-    round_half_ulp_trunc_dntz  ///< like round_half_ulp_truncate, except denorms
-                               ///< are rounded *toward* zero
+    round_half_ulp_trunc_dntz,  ///< like round_half_ulp_truncate, except
+                                ///< denorms are rounded *toward* zero
+    round_to_nearest_integer,   ///< cvt.rni
+
 };
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -543,6 +545,17 @@ struct NumericArrayConverter<T, T, N, Round> {
     using result_type = Array<T, N>;
     using source_type = Array<T, N>;
     static FloatRoundStyle const round_style = Round;
+
+    struct Params {
+        CUTLASS_HOST_DEVICE
+        Params(){};
+    };
+
+    CUTLASS_HOST_DEVICE
+    NumericArrayConverter() {}
+
+    CUTLASS_HOST_DEVICE
+    NumericArrayConverter(Params const& /* params */) {}
 
     CUTLASS_HOST_DEVICE
     result_type operator()(source_type const& s) { return s; }
@@ -1100,6 +1113,75 @@ struct NumericArrayConverter<uint4b_t, int, N, Round> {
 #endif  // Conditional guards to enable partial specialization for packed
         // integers
 
+/// Partial specialization for Array<int8_t, 4> <= Array<float, 4>
+template <>
+struct NumericArrayConverter<int8_t, float, 4,
+                             FloatRoundStyle::round_to_nearest_integer> {
+    using result_type = Array<int8_t, 4>;
+    using source_type = Array<float, 4>;
+
+    CUTLASS_DEVICE
+    static result_type convert(source_type const& source) {
+        Array<int32_t, 4> result;
+
+        asm volatile("cvt.rni.s8.f32 %0, %1;"
+                     : "=r"(result[0])
+                     : "f"(source[0]));
+        asm volatile("cvt.rni.s8.f32 %0, %1;"
+                     : "=r"(result[1])
+                     : "f"(source[1]));
+        asm volatile("cvt.rni.s8.f32 %0, %1;"
+                     : "=r"(result[2])
+                     : "f"(source[2]));
+        asm volatile("cvt.rni.s8.f32 %0, %1;"
+                     : "=r"(result[3])
+                     : "f"(source[3]));
+
+        result[0] = __byte_perm(result[0], result[1], 0x1140);
+        result[2] = __byte_perm(result[2], result[3], 0x1140);
+        result[0] = __byte_perm(result[0], result[2], 0x5410);
+
+        return reinterpret_cast<result_type const&>(result[0]);
+    }
+
+    CUTLASS_DEVICE
+    result_type operator()(source_type const& s) { return convert(s); }
+};
+
+/// Partial specialization for Array<int8_t> <= Array<float>
+template <int N>
+struct NumericArrayConverter<int8_t, float, N,
+                             FloatRoundStyle::round_to_nearest_integer> {
+    static_assert(!(N % 4), "N must be multiple of 4.");
+
+    using result_type = Array<int8_t, N>;
+    using source_type = Array<float, N>;
+
+    CUTLASS_DEVICE
+    static result_type convert(source_type const& source) {
+        NumericArrayConverter<int8_t, float, 4,
+                              FloatRoundStyle::round_to_nearest_integer>
+                convert_vector_;
+
+        result_type result;
+
+        Array<int8_t, 4>* result_ptr =
+                reinterpret_cast<Array<int8_t, 4>*>(&result);
+        Array<float, 4> const* source_ptr =
+                reinterpret_cast<Array<float, 4> const*>(&source);
+
+        CUTLASS_PRAGMA_UNROLL
+        for (int i = 0; i < N / 4; ++i) {
+            result_ptr[i] = convert_vector_(source_ptr[i]);
+        }
+
+        return result;
+    }
+
+    CUTLASS_DEVICE
+    result_type operator()(source_type const& s) { return convert(s); }
+};
+
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// FastNumericArrayConverter only works when the source is within center range.
@@ -1224,6 +1306,64 @@ struct PreferredRoundingMode<tfloat32_t, float> {
 };
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Quantized conversion operator for Array
+//
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Conversion operator for Array
+template <typename T, typename S, int N,
+          FloatRoundStyle Round = FloatRoundStyle::round_to_nearest>
+struct LinearCombinationClampArrayConverter;
+
+template <int N, FloatRoundStyle Round>
+struct LinearCombinationClampArrayConverter<int8_t, uint8_t, N, Round> {
+    using T = int8_t;
+    using S = uint8_t;
+    using ElementCompute = float;
+    using result_type = Array<T, N>;
+    using source_type = Array<S, N>;
+    static FloatRoundStyle const round_style = Round;
+
+    struct Params {
+        ElementCompute alpha_;
+        ElementCompute beta_;
+
+        CUTLASS_HOST_DEVICE
+        Params() : alpha_(1), beta_(0) {}
+
+        CUTLASS_HOST_DEVICE
+        Params(ElementCompute alpha, ElementCompute beta)
+                : alpha_(alpha), beta_(beta) {}
+    };
+
+    Params const& params_;
+
+    CUTLASS_HOST_DEVICE
+    LinearCombinationClampArrayConverter() : params_(Params()) {}
+
+    CUTLASS_HOST_DEVICE
+    LinearCombinationClampArrayConverter(Params const& params)
+            : params_(params) {}
+
+    CUTLASS_HOST_DEVICE
+    result_type convert(source_type const& s) {
+        result_type result;
+        NumericConverter<T, ElementCompute, Round> convert_;
+
+        CUTLASS_PRAGMA_UNROLL
+        for (int i = 0; i < N; ++i) {
+            ElementCompute intermediate =
+                    params_.alpha_ * ElementCompute(s[i]) - params_.beta_;
+            result[i] = convert_(intermediate);
+        }
+
+        return result;
+    }
+
+    CUTLASS_HOST_DEVICE
+    result_type operator()(source_type const& s) { return convert(s); }
+};
 
 }  // namespace cutlass
 

@@ -33,6 +33,7 @@
 
 #include "cutlass/conv/kernel/default_conv2d_fprop.h"
 #include "cutlass/conv/device/implicit_gemm_convolution.h"
+#include "cutlass/conv/kernel/default_conv2d_dgrad_trans.h"
 
 #include "conv2d_testbed_interleaved.h"
 
@@ -626,6 +627,42 @@ TEST(SM75_Device_Conv2d_Fprop_Optimized_ImplicitGemm_s8ncxhwx_s8cxrskx_s8ncxhwx_
     /// Run all unit test sizes with device-level Conv2d instance
     EXPECT_TRUE(
             (test::conv::device::TestAllInterleavedConv2d<Conv2dFprop, 32>()));
+}
+
+TEST(SM75_Device_Conv2d_Dgrad_Analytic_ImplicitGemm_s8ncxhwx_s8kxrscx_s8ncxhwx_tensor_op_s32,
+     128x128_64x2_64x64x64) {
+    /// Conv operation element types for the Gemm equivalent (ImplicitGemm)
+    using ElementA = int8_t;
+    using ElementB = int8_t;
+    using ElementC = int8_t;
+    using ElementAccumulator = int32_t;
+    using ElementCompute = float;
+
+    using Conv2dDgradKernel =
+            typename cutlass::conv::kernel::DefaultConv2dDgrad<
+                    ElementA, cutlass::layout::TensorNCxHWx<32>, ElementB,
+                    cutlass::layout::TensorKxRSCx<32>, ElementC,
+                    cutlass::layout::TensorNCxHWx<32>, ElementAccumulator,
+                    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm75,
+                    cutlass::gemm::GemmShape<128, 128, 64>,
+                    cutlass::gemm::GemmShape<64, 64, 64>,
+                    cutlass::gemm::GemmShape<8, 8, 16>,
+                    cutlass::epilogue::thread::LinearCombinationClamp<
+                            ElementC,
+                            64 / cutlass::sizeof_bits<ElementC>::value,
+                            ElementAccumulator, ElementCompute>,
+                    cutlass::gemm::threadblock::
+                            GemmIdentityThreadblockSwizzle<>,
+                    2, cutlass::arch::OpMultiplyAddSaturate,
+                    cutlass::conv::IteratorAlgorithm::kAnalytic,
+                    cutlass::conv::StrideSupport::kUnity>::Kernel;
+
+    using Conv2dDgrad =
+            cutlass::conv::device::ImplicitGemmConvolution<Conv2dDgradKernel>;
+
+    /// Run all unit test sizes with device-level Conv2d instance
+    EXPECT_TRUE(
+            (test::conv::device::TestAllInterleavedConv2d<Conv2dDgrad, 32>()));
 }
 
 ////////////////////////////////////////////////////////////////////////////////

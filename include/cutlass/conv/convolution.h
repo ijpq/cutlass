@@ -86,6 +86,13 @@ namespace conv {
 /// Convolutional operator
 enum class Operator { kFprop, kDgrad, kWgrad };
 
+enum class ConvType : uint32_t {
+    kConvolution = 0,
+    kBatchConvolution = 1,
+    kLocal = 2,
+    kLocalShare = 3
+};
+
 /// Distinguishes convolution  from cross correlation
 enum class Mode { kCrossCorrelation, kConvolution };
 

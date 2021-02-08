@@ -115,7 +115,6 @@ public:
     /// Loads a fragment from memory
     CUTLASS_DEVICE
     void load_with_pointer_offset(Fragment& frag, Index pointer_offset) {
-        frag.clear();
         AccessType* frag_ptr = reinterpret_cast<AccessType*>(&frag);
 
         CUTLASS_PRAGMA_UNROLL

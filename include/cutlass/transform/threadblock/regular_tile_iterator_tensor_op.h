@@ -29,6 +29,20 @@
    tensors.
 */
 
+/**
+ * \file include/cutlass/transform/threadblock/regular_tile_iterator_tensor_op.h
+ *
+ * Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT ARRANTIES OR CONDITIONS OF ANY KIND, either express or
+ * implied.
+ *
+ * This file has been modified by Megvii ("Megvii Modification").
+ * All Megvii Modifications are Copyright (C) 2014-2020 Megvii Inc. All rights
+ * reserved.
+ */
 #pragma once
 
 #include "cutlass/transform/threadblock/regular_tile_iterator.h"
@@ -554,7 +568,7 @@ public:
         for (int s = 0; s < ThreadMap::Iterations::kStrided; ++s) {
             CUTLASS_PRAGMA_UNROLL
             for (int c = 0; c < ThreadMap::Iterations::kContiguous; ++c) {
-                int access_idx = c + s * ThreadMap::Iterations::kContiguous;
+                int access_idx = c * ThreadMap::Iterations::kStrided + s;
                 frag_ptr[access_idx] =
                         *(address_iterator_.get() + pointer_offset);
                 ++address_iterator_;
@@ -582,7 +596,7 @@ public:
         for (int s = 0; s < ThreadMap::Iterations::kStrided; ++s) {
             CUTLASS_PRAGMA_UNROLL
             for (int c = 0; c < ThreadMap::Iterations::kContiguous; ++c) {
-                int access_idx = c + s * ThreadMap::Iterations::kContiguous;
+                int access_idx = c * ThreadMap::Iterations::kStrided + s;
 
                 char* byte_ptr =
                         reinterpret_cast<char*>(address_iterator_.get()) +
