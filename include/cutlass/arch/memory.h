@@ -55,6 +55,54 @@ struct global_load;
 // The redundant mov PTX instruction is used to enforce the compiler to
 // initialize data to zero before ld.global
 template <typename AccessType>
+struct global_load<AccessType, 64> {
+    CUTLASS_DEVICE
+    global_load(AccessType& D, void const* ptr, bool pred_guard) {
+        uint4* data = reinterpret_cast<uint4*>(&D);
+
+        asm volatile(
+                "{\n"
+                "  .reg .pred p;\n"
+                "  setp.ne.b32 p, %17, 0;\n"
+                "  mov.b32 %0, 0;\n"
+                "  mov.b32 %1, 0;\n"
+                "  mov.b32 %2, 0;\n"
+                "  mov.b32 %3, 0;\n"
+                "  mov.b32 %4, 0;\n"
+                "  mov.b32 %5, 0;\n"
+                "  mov.b32 %6, 0;\n"
+                "  mov.b32 %7, 0;\n"
+                "  mov.b32 %8, 0;\n"
+                "  mov.b32 %9, 0;\n"
+                "  mov.b32 %10, 0;\n"
+                "  mov.b32 %11, 0;\n"
+                "  mov.b32 %12, 0;\n"
+                "  mov.b32 %13, 0;\n"
+                "  mov.b32 %14, 0;\n"
+                "  mov.b32 %15, 0;\n"
+                "  @p ld.global.v4.u32 {%0, %1, %2, %3}, [%16];\n"
+                "  @p ld.global.v4.u32 {%4, %5, %6, %7}, [%34];\n"
+                "  @p ld.global.v4.u32 {%8, %9, %10, %11}, [%35];\n"
+                "  @p ld.global.v4.u32 {%12, %13, %14, %15}, [%36];\n"
+                "}\n"
+                : "=r"(data[0].x), "=r"(data[0].y), "=r"(data[0].z),
+                  "=r"(data[0].w), "=r"(data[1].x), "=r"(data[1].y),
+                  "=r"(data[1].z), "=r"(data[1].w), "=r"(data[2].x),
+                  "=r"(data[2].y), "=r"(data[2].z), "=r"(data[2].w),
+                  "=r"(data[3].x), "=r"(data[3].y), "=r"(data[3].z),
+                  "=r"(data[3].w)
+                : "l"(ptr), "r"((int)pred_guard), "r"(data[0].x),
+                  "r"(data[0].y), "r"(data[0].z), "r"(data[0].w),
+                  "r"(data[1].x), "r"(data[1].y), "r"(data[1].z),
+                  "r"(data[1].w), "r"(data[2].x), "r"(data[2].y),
+                  "r"(data[2].z), "r"(data[2].z), "r"(data[3].x),
+                  "r"(data[3].y), "r"(data[3].z), "r"(data[3].w),
+                  "l"(((uint8_t*)ptr) + 16), "l"(((uint8_t*)ptr) + 32),
+                  "l"(((uint8_t*)ptr) + 48));
+    }
+};
+
+template <typename AccessType>
 struct global_load<AccessType, 32> {
     CUTLASS_DEVICE
     global_load(AccessType& D, void const* ptr, bool pred_guard) {

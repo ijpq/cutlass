@@ -533,7 +533,7 @@ bool TestAllConvolution() {
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
 template <typename Convolution>
-bool TestConvolutionMma() {
+bool TestConvolutionMma(int interleaved = 32) {
     bool passed = true;
 
     double problem_alpha[] = {1.0};
@@ -552,8 +552,8 @@ bool TestConvolutionMma() {
     cutlass::conv::Mode mode = cutlass::conv::Mode::kCrossCorrelation;
 
     for (int n : {128, 48, 33}) {
-        for (int ic : {64, 96}) {
-            for (int oc : {256, 96}) {
+        for (int ic : {2, 3}) {      // times interleaved
+            for (int oc : {4, 3}) {  // times interleaved
                 for (int ih : {8}) {
                     for (int iw : {8}) {
                         for (int fh : {3, 5, 7}) {
@@ -562,7 +562,8 @@ bool TestConvolutionMma() {
                                     int oh = (ih + 2 * ph - fh) / sh + 1;
                                     int ow = (iw + 2 * ph - fh) / sh + 1;
                                     args.emplace_back(ConvolutionParameter{
-                                            n, ih, iw, ic, oc, fh, fh, oh, ow,
+                                            n, ih, iw, ic * interleaved,
+                                            oc * interleaved, fh, fh, oh, ow,
                                             ph, ph, sh, sh, 1, 1, mode});
                                 }
                             }

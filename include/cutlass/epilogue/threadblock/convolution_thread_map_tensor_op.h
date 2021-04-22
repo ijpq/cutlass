@@ -118,6 +118,63 @@ struct ConvolutionThreadMapTensorOp<
 
 template <typename ThreadblockShape_, typename WarpShape_,
           typename MmaTensorOpPolicy_, typename Element_, int ElementsPerAccess>
+struct ConvolutionThreadMapTensorOp<
+        ThreadblockShape_, WarpShape_, layout::TensorNCxHWx<64>,
+        MmaTensorOpPolicy_, Element_, ElementsPerAccess> {
+    using ThreadblockShape = ThreadblockShape_;
+    using WarpShape = WarpShape_;
+    using MmaTensorOpPolicy = MmaTensorOpPolicy_;
+    using Element = Element_;
+    using Layout = layout::TensorNCxHWx<64>;
+    static int const kElementsPerAccess = ElementsPerAccess;
+    static int const kInterleaved = 64;
+
+    //
+    // Definitions
+    //
+
+    struct Detail {
+        static int const kWarpSize = 32;
+
+        static_assert(!(ThreadblockShape::kM % WarpShape::kM) &&
+                              !(ThreadblockShape::kM % WarpShape::kM),
+                      "Divisibility");
+        static_assert(!(WarpShape::kM % kInterleaved), "Divisibility");
+
+        /// Number of warps
+        using WarpCount = MatrixShape<ThreadblockShape::kM / WarpShape::kM,
+                                      ThreadblockShape::kN / WarpShape::kN>;
+
+        /// Number of participating threads
+        static int const kThreads = WarpCount::kCount * kWarpSize;
+        using WarpAccessShape =
+                MatrixShape<kInterleaved,
+                            MmaTensorOpPolicy::Operator::Shape::kN>;
+
+        using Iterations =
+                MatrixShape<WarpShape::kM / kInterleaved,
+                            WarpShape::kN /
+                                    MmaTensorOpPolicy::Operator::Shape::kN>;
+
+        static int const kIterations = Iterations::kCount;
+    };
+
+    //
+    // ThreadMap
+    //
+
+    /// ThreadMap to be used by epilogue::PredicatedTileIterator satisfying
+    /// concept OutputTileThreadMap
+    using Type = ConvolutionOutputTileOptimalThreadMapTensorOp<
+            typename Detail::WarpAccessShape, typename Detail::Iterations,
+            typename Detail::WarpCount, kInterleaved, Detail::kThreads,
+            kElementsPerAccess, sizeof_bits<Element>::value>;
+};
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
+template <typename ThreadblockShape_, typename WarpShape_,
+          typename MmaTensorOpPolicy_, typename Element_, int ElementsPerAccess>
 struct ConvolutionThreadMapTensorOp<ThreadblockShape_, WarpShape_,
                                     layout::TensorNCxHWx<4>, MmaTensorOpPolicy_,
                                     Element_, ElementsPerAccess> {

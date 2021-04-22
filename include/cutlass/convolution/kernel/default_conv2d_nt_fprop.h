@@ -519,6 +519,108 @@ struct DefaultConv2dNtFprop<
 
 ////////////////////////////////////////////////////////////////////////////////
 
+/// Partial specialization for int4b_t and NCHW64 layout
+
+template <  /// Element type for Dst and Z Tensor operands
+        typename ElementDst,
+        /// Element type for internal accumulation
+        typename ElementAccumulator,
+        /// Threadblock-level tile size (concept: gemm::GemmShape)
+        typename ThreadblockShape,
+        /// Warp-level tile size (concept: gemm::GemmShape)
+        typename WarpShape,
+        /// Instruction-level tile size (concept: gemm::GemmShape)
+        typename InstructionShape,
+        /// Epilogue output operator
+        typename EpilogueOutputOp,
+        /// Threadblock-level swizzling operator
+        typename ThreadblockSwizzle,
+        /// Interleaving quantity
+        int Interleaved,
+        /// Operation performed by GEMM
+        typename MathOperatorTag,
+        /// Access granularity of Src Tensor in units of elements
+        int kAlignmentSrc,
+        /// Access granularity of Filter Tensor in units of elements
+        int kAlignmentFilter, bool NeedLoadFromConstMem>
+struct DefaultConv2dNtFprop<
+        int4b_t, layout::TensorNCxHWx<Interleaved>, int4b_t,
+        layout::TensorCxRSKx<Interleaved>, ElementDst,
+        layout::TensorNCxHWx<Interleaved>, ElementAccumulator,
+        arch::OpClassTensorOp, arch::Sm75, ThreadblockShape, WarpShape,
+        InstructionShape, EpilogueOutputOp, ThreadblockSwizzle, 2,
+        MathOperatorTag, kAlignmentSrc, kAlignmentFilter,
+        NeedLoadFromConstMem> {
+    static_assert(Interleaved == 64);
+
+    using ElementSrc = int4b_t;
+    using ElementFilter = int4b_t;
+    using LayoutSrc = layout::TensorNCxHWx<Interleaved>;
+    using LayoutFilter = layout::TensorCxRSKx<Interleaved>;
+    using LayoutDst = layout::TensorNCxHWx<Interleaved>;
+    using OperatorClass = arch::OpClassTensorOp;
+
+    static_assert(kAlignmentSrc == 128 / sizeof_bits<ElementSrc>::value,
+                  "Alignment must match thread data map's vector length");
+
+    static_assert(kAlignmentFilter == 128 / sizeof_bits<ElementFilter>::value,
+                  "Alignment must match thread data map's vector length");
+
+    // Define the MmaCore components
+    using MmaCore = typename cutlass::conv::threadblock::DefaultMmaCore<
+            ThreadblockShape, WarpShape, InstructionShape, ElementSrc,
+            LayoutSrc, kAlignmentSrc, ElementFilter, LayoutFilter,
+            kAlignmentFilter, ElementAccumulator, LayoutDst, OperatorClass, 2,
+            MathOperatorTag, true>;
+
+    // Define iterators over tiles from the Src Tensor operand
+    using IteratorSrc =
+            cutlass::conv::threadblock::Conv2dTileSrcIteratorFpropPrecomp<
+                    cutlass::MatrixShape<MmaCore::Shape::kK,
+                                         MmaCore::Shape::kN>,
+                    ElementSrc, LayoutSrc,
+                    typename MmaCore::IteratorThreadMapSrc,
+                    MmaCore::IteratorThreadMapSrc::kElementsPerAccess,
+                    cutlass::conv::threadblock::TileMap<
+                            LayoutSrc, cutlass::conv::threadblock::TileMapType::
+                                               kRow2C_Col2NHW>,
+                    NeedLoadFromConstMem>;
+
+    // Define iterators over tiles from the Filter Tensor operand
+    using IteratorFilter = cutlass::conv::threadblock::Conv2dTileIterator<
+            cutlass::MatrixShape<MmaCore::Shape::kK, MmaCore::Shape::kM>,
+            ElementFilter, LayoutFilter, Interleaved,
+            typename MmaCore::IteratorThreadMapFilter,
+            MmaCore::IteratorThreadMapFilter::kElementsPerAccess,
+            cutlass::conv::threadblock::TileMap<
+                    LayoutFilter,
+                    cutlass::conv::threadblock::TileMapType::kRow2CHW_Col2N>>;
+
+    // Define the threadblock-scoped pipelined matrix multiply
+    using Mma = typename cutlass::conv::threadblock::MmaNtPrecompPipelined<
+            typename MmaCore::Shape, IteratorSrc,
+            typename MmaCore::SmemIteratorSrc, IteratorFilter,
+            typename MmaCore::SmemIteratorFilter, ElementAccumulator, LayoutDst,
+            typename MmaCore::MmaPolicy>;
+
+    /// 64 bit store
+    static int const kEpilogueElementsPerAccess =
+            64 / sizeof_bits<ElementDst>::value;
+
+    /// Define the epilogue
+    using Epilogue = typename cutlass::epilogue::threadblock::
+            ConvolutionEpilogueTensorOp<ThreadblockShape, LayoutDst, LayoutDst,
+                                        typename Mma::Operator,
+                                        EpilogueOutputOp,
+                                        kEpilogueElementsPerAccess>::Epilogue;
+
+    /// Define the kernel-level conv operator.
+    using Kernel = cutlass::conv::kernel::ImplicitGemmNtPrecompConvolution<
+            Mma, Epilogue, ThreadblockSwizzle, conv::Operator::kFprop>;
+};
+
+////////////////////////////////////////////////////////////////////////////////
+
 /// Partial specialization for NCHW32 layout
 
 template <  /// Element type for Dst and Z Tensor operands

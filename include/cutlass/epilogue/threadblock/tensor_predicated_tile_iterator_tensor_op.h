@@ -285,7 +285,8 @@ public:
         // Initialize pointer
         byte_pointer_ = reinterpret_cast<uint8_t*>(pointer) +
                         (thread_offset.row() / kInterleaved) * params_.stride +
-                        (thread_offset.row() % kInterleaved);
+                        (thread_offset.row() % kInterleaved) *
+                                sizeof_bits<Element>::value / 8;
 
         // Initialize internal state counter
         state_ = 0;

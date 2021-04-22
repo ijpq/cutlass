@@ -105,6 +105,27 @@ struct DefaultConvolutionConfiguration<arch::OpClassTensorOp, arch::Sm75,
 };
 
 ////////////////////////////////////////////////////////////////////////////////
+
+template <typename ElementDst>
+struct DefaultConvolutionConfiguration<arch::OpClassTensorOp, arch::Sm75,
+                                       cutlass::int4b_t, cutlass::int4b_t,
+                                       ElementDst, int32_t> {
+    static int const kAlignmentA = 128 / sizeof_bits<cutlass::int4b_t>::value;
+    static int const kAlignmentB = 128 / sizeof_bits<cutlass::int4b_t>::value;
+    using ThreadblockShape = cutlass::gemm::GemmShape<128, 256, 64>;
+    using WarpShape = cutlass::gemm::GemmShape<64, 64, 64>;
+    using InstructionShape = cutlass::gemm::GemmShape<8, 8, 32>;
+    using ArchTag = arch::Sm75;
+    static int const kStages = 2;
+
+    using EpilogueOutputOp = epilogue::thread::BiasAddLinearCombinationClamp<
+            ElementDst, 128 / sizeof_bits<ElementDst>::value, int32_t, int32_t,
+            float>;
+
+    using Operator = arch::OpMultiplyAddSaturate;
+};
+
+////////////////////////////////////////////////////////////////////////////////
 }  // namespace device
 }  // namespace conv
 }  // namespace cutlass
