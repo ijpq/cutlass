@@ -106,12 +106,13 @@ struct DefaultConvolutionConfiguration<arch::OpClassTensorOp, arch::Sm75,
 
 ////////////////////////////////////////////////////////////////////////////////
 
-template <typename ElementDst>
+template <bool Signed, typename ElementDst>
 struct DefaultConvolutionConfiguration<arch::OpClassTensorOp, arch::Sm75,
-                                       cutlass::int4b_t, cutlass::int4b_t,
+                                       integer_subbyte<4, Signed>, int4b_t,
                                        ElementDst, int32_t> {
-    static int const kAlignmentA = 128 / sizeof_bits<cutlass::int4b_t>::value;
-    static int const kAlignmentB = 128 / sizeof_bits<cutlass::int4b_t>::value;
+    using ElementSrc = integer_subbyte<4, Signed>;
+    static int const kAlignmentA = 128 / sizeof_bits<int4b_t>::value;
+    static int const kAlignmentB = 128 / sizeof_bits<ElementSrc>::value;
     using ThreadblockShape = cutlass::gemm::GemmShape<128, 256, 64>;
     using WarpShape = cutlass::gemm::GemmShape<64, 64, 64>;
     using InstructionShape = cutlass::gemm::GemmShape<8, 8, 32>;

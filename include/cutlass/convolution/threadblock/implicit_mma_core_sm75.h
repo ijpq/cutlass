@@ -360,6 +360,8 @@ struct DefaultMmaCore<Shape_, WarpShape_, gemm::GemmShape<8, 8, 16>, int8_t,
 ///
 /// This uses the default warp-level operator given tile sizes
 template <
+        /// ElementSrc is int4b_t or uint4b_t
+        bool Signed,
         /// Shape of threadblock-scoped matrix multiply operator (concept:
         /// GemmShape)
         typename Shape_,
@@ -377,14 +379,15 @@ template <
         typename LayoutDst_,
         /// Operation performed by Convolution
         typename Operator_>
-struct DefaultMmaCore<Shape_, WarpShape_, gemm::GemmShape<8, 8, 32>, int4b_t,
-                      layout::TensorNCxHWx<64>, kAlignmentSrc, int4b_t,
-                      LayoutFilter_, kAlignmentFilter, ElementDst_, LayoutDst_,
-                      arch::OpClassTensorOp, 2, Operator_, true> {
+struct DefaultMmaCore<Shape_, WarpShape_, gemm::GemmShape<8, 8, 32>,
+                      integer_subbyte<4, Signed>, layout::TensorNCxHWx<64>,
+                      kAlignmentSrc, int4b_t, LayoutFilter_, kAlignmentFilter,
+                      ElementDst_, LayoutDst_, arch::OpClassTensorOp, 2,
+                      Operator_, true> {
     using Shape = Shape_;
     using WarpShape = WarpShape_;
     using InstructionShape = gemm::GemmShape<8, 8, 32>;
-    using ElementSrc = int4b_t;
+    using ElementSrc = integer_subbyte<4, Signed>;
     using LayoutSrc = layout::TensorNCxHWx<64>;
     using ElementFilter = int4b_t;
     using LayoutFilter = LayoutFilter_;

@@ -520,8 +520,13 @@ struct DefaultConv2dNtFprop<
 ////////////////////////////////////////////////////////////////////////////////
 
 /// Partial specialization for int4b_t and NCHW64 layout
+/// ElementFilter must be int4b_t
+/// ElementSrc can be int4b_t or uint4b_t
 
-template <  /// Element type for Dst and Z Tensor operands
+template <
+        /// ElementSrc is int4b_t or uint4b_t
+        bool Signed,
+        /// Element type for Dst and Z Tensor operands
         typename ElementDst,
         /// Element type for internal accumulation
         typename ElementAccumulator,
@@ -544,7 +549,7 @@ template <  /// Element type for Dst and Z Tensor operands
         /// Access granularity of Filter Tensor in units of elements
         int kAlignmentFilter, bool NeedLoadFromConstMem>
 struct DefaultConv2dNtFprop<
-        int4b_t, layout::TensorNCxHWx<Interleaved>, int4b_t,
+        integer_subbyte<4, Signed>, layout::TensorNCxHWx<Interleaved>, int4b_t,
         layout::TensorCxRSKx<Interleaved>, ElementDst,
         layout::TensorNCxHWx<Interleaved>, ElementAccumulator,
         arch::OpClassTensorOp, arch::Sm75, ThreadblockShape, WarpShape,
@@ -553,7 +558,7 @@ struct DefaultConv2dNtFprop<
         NeedLoadFromConstMem> {
     static_assert(Interleaved == 64);
 
-    using ElementSrc = int4b_t;
+    using ElementSrc = integer_subbyte<4, Signed>;
     using ElementFilter = int4b_t;
     using LayoutSrc = layout::TensorNCxHWx<Interleaved>;
     using LayoutFilter = layout::TensorCxRSKx<Interleaved>;

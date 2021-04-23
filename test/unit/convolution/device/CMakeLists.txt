@@ -39,5 +39,6 @@ cutlass_test_unit_add_executable(
   convolution_s8nchw32_s8chwn32_s8nchw4_tensor_op_s32_sm75_perf.cu
   convolution_s8nchw32_s8chwn32_s8nchw4_tensor_op_s32_sm75.cu
   convolution_s4nchw64_s4chwn64_s4nchw64_tensor_op_s32_sm75.cu
+  convolution_u4nchw64_s4chwn64_s4nchw64_tensor_op_s32_sm75.cu
   conv2d_implicit_gemm_nt_s8ncxhwx_s8cxrskx_s8ncxhwx_s32_sm75
 )
