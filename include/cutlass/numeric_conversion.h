@@ -32,6 +32,7 @@
 
 #include "cutlass/cutlass.h"
 #include "cutlass/numeric_types.h"
+#include "cutlass/platform/platform.h"
 
 #include "cutlass/array.h"
 #include "cutlass/half.h"
@@ -1104,6 +1105,255 @@ struct NumericArrayConverter<uint4b_t, int, N, Round> {
         }
 
         return result;
+    }
+
+    CUTLASS_HOST_DEVICE
+    result_type operator()(source_type const& s) { return convert(s); }
+};
+
+namespace detail {
+template <int Bits, bool Signed, typename Storage_ = unsigned>
+struct fast_subbyte_converter {
+    /// Storage type
+    using Storage = Storage_;
+
+    /// Number of bits
+    static int const kBits = Bits;
+
+    /// Whether type is signed
+    static bool const kSigned = Signed;
+
+    /// External type
+    using T = typename platform::conditional<kSigned, int, unsigned>::type;
+
+    /// Magic shift
+    static int const kShift = 32 - kBits;
+
+    CUTLASS_HOST_DEVICE
+    static int convert(Storage const& storage, int bit_offset) {
+        unsigned intermediate = static_cast<unsigned>(storage);
+        T result = reinterpret_cast<T&>(intermediate);
+        return (result << (kShift - bit_offset)) >> kShift;
+    }
+
+    CUTLASS_HOST_DEVICE
+    int operator()(Storage const& storage, int bit_offset) {
+        return convert(storage, bit_offset);
+    }
+};
+
+template <typename T, typename S, int N,
+          FloatRoundStyle Round = FloatRoundStyle::round_to_nearest_integer,
+          typename Enable = void>
+struct subbyte_array_converter;
+
+template <typename T>
+struct subbyte_array_converter<
+        T, float, 8, FloatRoundStyle::round_to_nearest_integer,
+        typename platform::enable_if<
+                platform::is_same<T, int4b_t>::value ||
+                platform::is_same<T, uint4b_t>::value>::type> {
+    using result_type = Array<T, 8>;
+    using source_type = Array<float, 8>;
+
+    CUTLASS_HOST_DEVICE
+    static result_type convert(source_type const& source) {
+        using intermediate_type = Array<int, 8>;
+        intermediate_type intermediate;
+
+        CUTLASS_PRAGMA_UNROLL
+        for (int i = 0; i < 8; ++i) {
+            asm volatile("cvt.rni.s32.f32 %0, %1;"
+                         : "=r"(intermediate[i])
+                         : "f"(source[i]));
+        }
+        NumericArrayConverter<T, int, 8,
+                              FloatRoundStyle::round_to_nearest_integer>
+                convert_vector_;
+        return convert_vector_(intermediate);
+    }
+
+    CUTLASS_HOST_DEVICE
+    result_type operator()(source_type const& s) { return convert(s); }
+};
+
+template <typename T, int N>
+struct subbyte_array_converter<
+        T, float, N, FloatRoundStyle::round_to_nearest_integer,
+        typename platform::enable_if<
+                platform::is_same<T, int4b_t>::value ||
+                platform::is_same<T, uint4b_t>::value>::type> {
+    static_assert(!(N % 8), "N must be a multiple of 8.");
+
+    using result_type = Array<T, N>;
+    using source_type = Array<float, N>;
+
+    CUTLASS_HOST_DEVICE
+    static result_type convert(source_type const& source) {
+        subbyte_array_converter<T, float, 8,
+                                FloatRoundStyle::round_to_nearest_integer>
+                convert_vector_;
+        result_type result;
+
+        Array<T, 8>* result_ptr = reinterpret_cast<Array<T, 8>*>(&result);
+        Array<float, 8> const* source_ptr =
+                reinterpret_cast<Array<float, 8> const*>(&source);
+
+        CUTLASS_PRAGMA_UNROLL
+        for (int i = 0; i < N / 8; ++i) {
+            result_ptr[i] = convert_vector_(source_ptr[i]);
+        }
+        return result;
+    }
+
+    CUTLASS_HOST_DEVICE
+    result_type operator()(source_type const& s) { return convert(s); }
+};
+
+template <typename S>
+struct subbyte_array_converter<
+        float, S, 8, FloatRoundStyle::round_to_nearest_integer,
+        typename platform::enable_if<
+                platform::is_same<S, int4b_t>::value ||
+                platform::is_same<S, uint4b_t>::value>::type> {
+    using result_type = Array<float, 8>;
+    using source_type = Array<S, 8>;
+    using fast_converter = fast_subbyte_converter<4, S::kSigned>;
+
+    CUTLASS_HOST_DEVICE
+    static result_type convert(source_type const& source) {
+        result_type result;
+        fast_converter converter_;
+        CUTLASS_PRAGMA_UNROLL
+        for (int i = 0; i < 8; ++i) {
+            int intermediate = converter_(
+                    reinterpret_cast<unsigned const&>(source), i * 4);
+            asm volatile("cvt.rn.f32.s32 %0, %1;"
+                         : "=f"(result[i])
+                         : "r"(intermediate));
+        }
+
+        return result;
+    }
+
+    CUTLASS_HOST_DEVICE
+    result_type operator()(source_type const& s) { return convert(s); }
+};
+
+template <typename S, int N>
+struct subbyte_array_converter<
+        float, S, N, FloatRoundStyle::round_to_nearest_integer,
+        typename platform::enable_if<
+                platform::is_same<S, int4b_t>::value ||
+                platform::is_same<S, uint4b_t>::value>::type> {
+    static_assert(!(N % 8), "N must be a multiple of 8.");
+
+    using result_type = Array<float, N>;
+    using source_type = Array<S, N>;
+
+    CUTLASS_HOST_DEVICE
+    static result_type convert(source_type const& source) {
+        subbyte_array_converter<float, S, 8,
+                                FloatRoundStyle::round_to_nearest_integer>
+                convert_vector_;
+        result_type result;
+
+        Array<float, 8>* result_ptr =
+                reinterpret_cast<Array<float, 8>*>(&result);
+        Array<S, 8> const* source_ptr =
+                reinterpret_cast<Array<S, 8> const*>(&source);
+
+        CUTLASS_PRAGMA_UNROLL
+        for (int i = 0; i < N / 8; ++i) {
+            result_ptr[i] = convert_vector_(source_ptr[i]);
+        }
+        return result;
+    }
+
+    CUTLASS_HOST_DEVICE
+    result_type operator()(source_type const& s) { return convert(s); }
+};
+
+}  // namespace detail
+
+/// Partial specialization for Array<int4b_t> <= Array<float>
+template <int N>
+struct NumericArrayConverter<int4b_t, float, N,
+                             FloatRoundStyle::round_to_nearest_integer> {
+    static_assert(!(N % 8), "N must be a multiple of 8.");
+
+    using result_type = Array<int4b_t, N>;
+    using source_type = Array<float, N>;
+    using underlying_converter = detail::subbyte_array_converter<
+            int4b_t, float, N, FloatRoundStyle::round_to_nearest_integer>;
+
+    CUTLASS_HOST_DEVICE
+    static result_type convert(source_type const& source) {
+        underlying_converter convert_;
+        return convert_(source);
+    }
+
+    CUTLASS_HOST_DEVICE
+    result_type operator()(source_type const& s) { return convert(s); }
+};
+
+/// Partial specialization for Array<uint4b_t> <= Array<float>
+template <int N>
+struct NumericArrayConverter<uint4b_t, float, N,
+                             FloatRoundStyle::round_to_nearest_integer> {
+    static_assert(!(N % 8), "N must be a multiple of 8.");
+
+    using result_type = Array<uint4b_t, N>;
+    using source_type = Array<float, N>;
+    using underlying_converter = detail::subbyte_array_converter<
+            uint4b_t, float, N, FloatRoundStyle::round_to_nearest_integer>;
+
+    CUTLASS_HOST_DEVICE
+    static result_type convert(source_type const& source) {
+        underlying_converter convert_;
+        return convert_(source);
+    }
+
+    CUTLASS_HOST_DEVICE
+    result_type operator()(source_type const& s) { return convert(s); }
+};
+
+/// Partial specialization for Array<int4b_t> => Array<float>
+template <int N>
+struct NumericArrayConverter<float, int4b_t, N,
+                             FloatRoundStyle::round_to_nearest_integer> {
+    static_assert(!(N % 8), "N must be a multiple of 8.");
+
+    using result_type = Array<float, N>;
+    using source_type = Array<int4b_t, N>;
+    using underlying_converter = detail::subbyte_array_converter<
+            float, int4b_t, N, FloatRoundStyle::round_to_nearest_integer>;
+
+    CUTLASS_HOST_DEVICE
+    static result_type convert(source_type const& source) {
+        underlying_converter convert_;
+        return convert_(source);
+    }
+
+    CUTLASS_HOST_DEVICE
+    result_type operator()(source_type const& s) { return convert(s); }
+};
+
+/// Partial specialization for Array<uint4b_t> => Array<float>
+template <int N>
+struct NumericArrayConverter<float, uint4b_t, N,
+                             FloatRoundStyle::round_to_nearest_integer> {
+    static_assert(!(N % 8), "N must be a multiple of 8.");
+
+    using result_type = Array<float, N>;
+    using source_type = Array<uint4b_t, N>;
+    using underlying_converter = detail::subbyte_array_converter<
+            float, uint4b_t, N, FloatRoundStyle::round_to_nearest_integer>;
+
+    CUTLASS_HOST_DEVICE
+    static result_type convert(source_type const& source) {
+        underlying_converter convert_;
+        return convert_(source);
     }
 
     CUTLASS_HOST_DEVICE
