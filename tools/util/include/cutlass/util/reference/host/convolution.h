@@ -47,6 +47,21 @@ namespace cutlass {
 namespace reference {
 namespace host {
 
+namespace detail {
+template <typename T, typename S>
+struct need_round {
+    static bool const src_float =
+            cutlass::platform::is_floating_point<S>::value;
+    static bool const dst_integer =
+            cutlass::platform::is_integral<T>::value ||
+            cutlass::platform::is_same<T, int8_t>::value ||
+            cutlass::platform::is_same<T, uint8_t>::value ||
+            cutlass::platform::is_same<T, cutlass::int4b_t>::value ||
+            cutlass::platform::is_same<T, cutlass::uint4b_t>::value;
+    static bool const value = src_float && dst_integer;
+};
+}  // namespace detail
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 /// Forward propagation
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -873,10 +888,8 @@ void compute_convolution(conv::Conv2dProblemSize conv_param, ScalarType alpha,
                                         beta * ScalarType(tensor_bias.at(
                                                        coord_bias)) +
                                         gamma * ScalarType(tensor_z.at(coord));
-                                if (cutlass::platform::is_same<ScalarType,
-                                                               float>::value &&
-                                    cutlass::platform::is_same<ElementDst,
-                                                               int8_t>::value) {
+                                if (detail::need_round<ElementDst,
+                                                       ScalarType>::value) {
                                     intermediate = std::round(intermediate);
                                 }
                                 tensor_dst.at(coord) = convert_op(intermediate);
@@ -1033,10 +1046,8 @@ void compute_batch_convolution(
                                         beta * ScalarType(tensor_bias.at(
                                                        coord_bias)) +
                                         gamma * ScalarType(tensor_z.at(coord));
-                                if (cutlass::platform::is_same<ScalarType,
-                                                               float>::value &&
-                                    cutlass::platform::is_same<ElementDst,
-                                                               int8_t>::value) {
+                                if (detail::need_round<ElementDst,
+                                                       ScalarType>::value) {
                                     intermediate = std::round(intermediate);
                                 }
                                 tensor_dst.at(coord) = convert_op(intermediate);
@@ -1481,13 +1492,9 @@ struct Deconvolution {
                         ScalarType intermediate = alpha * ScalarType(acc) +
                                                   beta * ScalarType(bias_ref) +
                                                   gamma * ScalarType(c_ref);
-                        if (cutlass::platform::is_same<ScalarType,
-                                                       float>::value &&
-                            cutlass::platform::is_same<ElementDst,
-                                                       int8_t>::value) {
+                        if (detail::need_round<ElementDst, ScalarType>::value) {
                             intermediate = std::round(intermediate);
                         }
-
                         tensor_dst.at(cutlass::make_Coord(n, h, w, c)) =
                                 convert_op(intermediate);
 
