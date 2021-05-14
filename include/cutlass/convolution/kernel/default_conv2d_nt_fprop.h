@@ -316,9 +316,15 @@ struct DefaultConv2dNtFprop<
             (kStages == 1), MmaPipelineSingleStage, MmaPipelineTwoStages>::type;
 
     static int const kEpilogueElementsPerAccess =
-            cutlass::platform::is_same<LayoutDst, layout::TensorNCHW>::value
+            cutlass::platform::is_same<ElementDst, float>::value
                     ? 1
-                    : 4;
+                    : (cutlass::platform::is_same<ElementDst,
+                                                  cutlass::int4b_t>::value ||
+                                       cutlass::platform::is_same<
+                                               ElementDst,
+                                               cutlass::uint4b_t>::value
+                               ? 8
+                               : 4);
 
     /// Define the epilogue
     using Epilogue =

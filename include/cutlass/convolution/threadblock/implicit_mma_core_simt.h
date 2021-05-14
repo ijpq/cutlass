@@ -358,7 +358,9 @@ struct DefaultMmaCore<Shape_, WarpShape_, gemm::GemmShape<1, 1, 4>, int8_t,
 
     using LayoutFragmentC = typename cutlass::platform::conditional<
             cutlass::platform::is_same<LayoutDst,
-                                       layout::TensorNCxHWx<32>>::value,
+                                       layout::TensorNCxHWx<32>>::value ||
+                    cutlass::platform::is_same<LayoutDst,
+                                               layout::TensorNHWC>::value,
             layout::ColumnMajor, layout::RowMajor>::type;
 
     using MmaWarpSimt = cutlass::gemm::warp::MmaSimt<

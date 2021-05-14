@@ -155,7 +155,6 @@ struct InterleavedRowArrangement<Shape, 32, WarpsRemaining, ElementsPerAccess,
     static int const kDeltaColumn =
             kAccessWidth * kElementsPerAccess / kInterleaved;
 };
-
 }  // namespace detail
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -275,6 +274,7 @@ struct ConvolutionOutputTileOptimalThreadMap {
     /// Initial offset function
     CUTLASS_HOST_DEVICE
     static MatrixCoord initial_offset(int thread_idx) {
+       
         int warp_idx = thread_idx / kWarpSize;
         int lane_idx = thread_idx % kWarpSize;
 
@@ -568,6 +568,232 @@ struct ConvolutionOutputTileOptimalThreadMap<Shape_, Count_, 32, Threads,
                                       (column_offset + lane_col_offset) *
                                               kElementsPerAccess /
                                               kInterleaved);
+
+            return coord;
+        }
+    };
+};
+
+////////////////////////////////////////////////////////////////////////////////
+
+template <typename Shape_,        ///< Output tile shape
+          typename Count_,        ///< Output tile count
+          int Threads,            ///< Number of threads
+          int ElementsPerAccess,  ///< Number of elements per memory access
+          int ElementSize         ///< Element size in bits
+          >
+struct ConvolutionOutputTileOptimalThreadMapNHWC;
+
+template <typename Shape_, typename Count_, int Threads, int ElementsPerAccess,
+          int ElementSize>
+struct ConvolutionOutputTileOptimalThreadMapNHWC {
+    using Shape = Shape_;
+    using Count = Count_;
+
+    static int const kWarpSize = 32;
+    static int const kThreads = Threads;
+
+    static int const kElementsPerAccess = ElementsPerAccess;
+    static int const kElementSize = ElementSize;
+
+    static_assert(!((kElementSize * kElementsPerAccess) % 32),
+                  "Elements size in bits per access of one thread must be a "
+                  "multiple of 32.");
+
+    using TransposedShape = MatrixShape<Shape::kColumn, Shape::kRow>;
+    static_assert(!(TransposedShape::kColumn % kElementsPerAccess),
+                  "Divisibility");
+    using ShapeVec = MatrixShape<TransposedShape::kRow,
+                                 TransposedShape::kColumn / kElementsPerAccess>;
+    static_assert(!(kWarpSize % ShapeVec::kColumn));
+
+    static int const kWarpArrangementColumn = ShapeVec::kColumn;
+    static int const kWarpArrangementRow =
+            kWarpSize / kWarpArrangementColumn >= ShapeVec::kRow
+                    ? ShapeVec::kRow
+                    : kWarpSize / kWarpArrangementColumn;
+
+    using WarpPartitionShape =
+            MatrixShape<kWarpArrangementRow, kWarpArrangementColumn>;
+    static int const kWarpPartitionSize = WarpPartitionShape::kCount;
+    static int const kWarpPartitionCount = kThreads / kWarpPartitionSize;
+    //
+    // Metaprogram computation
+    //
+
+    struct Detail {
+        // Clusters
+        static int const kIterationsCluster =
+                ((Shape::kCluster > kWarpPartitionCount)
+                         ? Shape::kCluster / kWarpPartitionCount
+                         : 1);
+
+        static int const kDeltaCluster =
+                ((Shape::kCluster > kWarpPartitionCount)
+                         ? Shape::kColumn * Count::kColumn * Shape::kGroup *
+                                   Count::kGroup * Shape::kCluster /
+                                   kIterationsCluster
+                         : 1);
+
+        static int const kCompactedDeltaCluster =
+                ((Shape::kCluster > kWarpPartitionCount)
+                         ? Shape::kColumn * Shape::kGroup * Shape::kCluster /
+                                   kIterationsCluster
+                         : 1);
+
+        static int const kWarpPartitionsCluster =
+                ((Shape::kCluster > kWarpPartitionCount)
+                         ? kWarpPartitionCount
+                         : kWarpPartitionCount / Shape::kCluster);
+
+        static int const kWarpsRemainingForGroups =
+                ((Shape::kCluster > kWarpPartitionCount)
+                         ? 1
+                         : kWarpPartitionCount / Shape::kCluster);
+
+        // Groups
+        static int const kIterationsGroup =
+                ((Shape::kGroup > kWarpsRemainingForGroups)
+                         ? Shape::kGroup / kWarpsRemainingForGroups
+                         : 1);
+
+        static int const kDeltaGroup =
+                ((Shape::kGroup > kWarpsRemainingForGroups)
+                         ? Shape::kColumn * Count::kColumn * Shape::kGroup /
+                                   kIterationsGroup
+                         : 1);
+
+        static int const kCompactedDeltaGroup =
+                ((Shape::kGroup > kWarpsRemainingForGroups)
+                         ? Shape::kColumn * Shape::kGroup / kIterationsGroup
+                         : 1);
+
+        static int const kWarpPartitionsGroup =
+                ((Shape::kGroup > kWarpsRemainingForGroups)
+                         ? 1
+                         : kWarpsRemainingForGroups / Shape::kGroup);
+
+        static int const kWarpsRemainingForRows =
+                ((Shape::kGroup > kWarpsRemainingForGroups)
+                         ? 1
+                         : kWarpsRemainingForGroups / Shape::kGroup);
+
+        static_assert(kWarpsRemainingForRows == 1);
+        // Warp partitions
+        using WarpPartitions =
+                OutputTileShape<1, kWarpsRemainingForRows, kWarpPartitionsGroup,
+                                kWarpPartitionsCluster, 1>;
+
+        static int const kAccessWidth = ShapeVec::kColumn;
+        static int const kAccessRows = kWarpPartitionSize / kAccessWidth;
+
+        static int const kIterationsRow = cutlass::const_max(
+                ShapeVec::kRow / (kWarpPartitionSize / ShapeVec::kColumn), 1);
+        static int const kIterationsColumn = 1;
+
+        static int const kDeltaRow = kAccessRows;
+        static int const kDeltaColumn = kAccessWidth * kElementsPerAccess;
+    };
+
+    //
+    // Output
+    //
+
+    using Iterations =
+            OutputTileShape<Detail::kIterationsColumn, Detail::kIterationsRow,
+                            Detail::kIterationsGroup,
+                            Detail::kIterationsCluster, 1>;
+
+    using Delta =
+            OutputTileShape<Detail::kDeltaColumn,
+                            Detail::kDeltaRow,
+                            Detail::kDeltaGroup, Detail::kDeltaCluster, 1>;
+
+    /// Initial offset function
+    CUTLASS_HOST_DEVICE
+    static MatrixCoord initial_offset(int thread_idx) {
+ 
+        int warp_idx = thread_idx / kWarpPartitionSize;
+        int lane_idx = thread_idx % kWarpPartitionSize;
+
+        // Compute warp location
+        int cluster_idx = warp_idx / Detail::WarpPartitions::kCluster;
+        int residual_cluster = warp_idx % Detail::WarpPartitions::kCluster;
+
+        int group_idx = residual_cluster / Detail::WarpPartitions::kGroup;
+        int residual_group = residual_cluster % Detail::WarpPartitions::kGroup;
+
+        int row_idx = residual_group / Detail::WarpPartitions::kColumn;
+        int col_idx = residual_group % Detail::WarpPartitions::kColumn;
+
+        // Compute per-lane offset
+        int lane_row_offset = lane_idx / Detail::kAccessWidth;
+        int lane_col_offset = lane_idx % Detail::kAccessWidth;
+
+        // Compute coordinate in output space
+        int cluster_offset = cluster_idx * Shape::kColumn * Count::kColumn *
+                             Shape::kGroup * Count::kGroup;
+        int group_offset = group_idx * Shape::kColumn * Count::kColumn;
+        int row_offset = row_idx * Iterations::kRow * Detail::kAccessRows;
+        int column_offset =
+                col_idx * Iterations::kColumn * Detail::kAccessWidth;
+
+        // row and column must be transposed
+        return MatrixCoord(
+                (column_offset + lane_col_offset) * kElementsPerAccess,
+                cluster_offset + group_offset + row_offset + lane_row_offset);
+    }
+
+    /// Compacted thread map in which the 4D region is contiguous
+    struct CompactedThreadMap {
+        using Shape = Shape_;
+
+        using Iterations = OutputTileShape<
+                Detail::kIterationsColumn, Detail::kIterationsRow,
+                Detail::kIterationsGroup, Detail::kIterationsCluster, 1>;
+
+        using Delta = OutputTileShape<Detail::kDeltaColumn, Detail::kDeltaRow,
+                                      Detail::kCompactedDeltaGroup,
+                                      Detail::kCompactedDeltaCluster, 1>;
+
+        /// Number of elements within each vector access
+        static int const kElementsPerAccess = ElementsPerAccess;
+
+        /// Number  of threads
+        static int const kThreads = Threads;
+
+        /// Function to compute each thread's initial offset
+        CUTLASS_HOST_DEVICE
+        static MatrixCoord initial_offset(int thread_idx) {
+            int warp_idx = thread_idx / kWarpPartitionSize;
+            int lane_idx = thread_idx % kWarpPartitionSize;
+
+            // Compute warp location
+            int cluster_idx = warp_idx / Detail::WarpPartitions::kCluster;
+            int residual_cluster = warp_idx % Detail::WarpPartitions::kCluster;
+
+            int group_idx = residual_cluster / Detail::WarpPartitions::kGroup;
+            int residual_group =
+                    residual_cluster % Detail::WarpPartitions::kGroup;
+
+            int row_idx = residual_group / Detail::WarpPartitions::kColumn;
+            int col_idx = residual_group % Detail::WarpPartitions::kColumn;
+
+            // Compute per-lane offset
+            int lane_row_offset = lane_idx / Detail::kAccessWidth;
+            int lane_col_offset = lane_idx % Detail::kAccessWidth;
+
+            // Compute coordinate in output space
+            int cluster_offset = cluster_idx * Shape::kColumn * Shape::kGroup;
+            int group_offset = group_idx * Shape::kColumn;
+            int row_offset = row_idx * Iterations::kRow * Detail::kAccessRows;
+            int column_offset =
+                    col_idx * Iterations::kColumn * Detail::kAccessWidth;
+
+            MatrixCoord coord(
+                    (column_offset + lane_col_offset) * kElementsPerAccess,
+                    cluster_offset + group_offset + row_offset +
+                            lane_row_offset);
 
             return coord;
         }

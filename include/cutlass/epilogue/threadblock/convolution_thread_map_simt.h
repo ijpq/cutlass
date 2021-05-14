@@ -238,6 +238,65 @@ struct ConvolutionThreadMapSimt<ThreadblockShape_, WarpShape_,
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
+template <typename ThreadblockShape_, typename WarpShape_,
+          typename MmaSimtPolicy_, typename Element_, int ElementsPerAccess>
+struct ConvolutionThreadMapSimt<ThreadblockShape_, WarpShape_,
+                                layout::TensorNHWC, MmaSimtPolicy_,
+                                Element_, ElementsPerAccess> {
+    using ThreadblockShape = ThreadblockShape_;
+    using WarpShape = WarpShape_;
+    using MmaSimtPolicy = MmaSimtPolicy_;
+    using Element = Element_;
+    using Layout = layout::TensorNHWC;
+    static int const kElementsPerAccess = ElementsPerAccess;
+
+    //
+    // Definitions
+    //
+
+    struct Detail {
+        static int const kWarpSize = 32;
+
+        static_assert(!(ThreadblockShape::kM % WarpShape::kM) &&
+                              !(ThreadblockShape::kM % WarpShape::kM),
+                      "Divisibility");
+
+        /// Number of warps
+        using WarpCount =
+                gemm::GemmShape<ThreadblockShape::kM / WarpShape::kM,
+                                ThreadblockShape::kN / WarpShape::kN, 1>;
+
+        /// Computes number of thread-level matrix multiplies are needed to span
+        /// a warp
+        static int const kGroupCount =
+                WarpShape::kN / (MmaSimtPolicy::WarpShape::kColumn *
+                                 MmaSimtPolicy::LaneMmaShape::kN);
+
+        /// Number of participating threads
+        static int const kThreads = WarpCount::kCount * kWarpSize;
+
+        /// Number of iterations
+        static int const kIterations = kGroupCount;
+    };
+
+    //
+    // ThreadMap
+    //
+
+    /// ThreadMap to be used by epilogue::PredicatedTileIterator satisfying
+    /// concept OutputTileThreadMap
+    using Type = ConvolutionOutputTileOptimalThreadMapNHWC<
+            OutputTileShape<  // Shape
+                    MmaSimtPolicy::LaneMmaShape::kN, ThreadblockShape::kM,
+                    MmaSimtPolicy::WarpShape::kColumn, Detail::WarpCount::kN,
+                    1>,
+            OutputTileShape<  // Count
+                    1, 1, Detail::kGroupCount, 1, Detail::kIterations>,
+            Detail::kThreads, kElementsPerAccess, sizeof_bits<Element>::value>;
+};
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
 }  // namespace threadblock
 }  // namespace epilogue
 }  // namespace cutlass

@@ -34,6 +34,9 @@ cutlass_test_unit_add_executable(
   simt_int8_nchw4_iconv_sm61_perf.cu
   simt_int8_s8nchw4_s8nchw4_s8nchw32_iconv_sm61_perf.cu
   simt_int8_s8nchw4_s8nchw4_s8nchw32_iconv_sm61.cu
+  simt_int8_s8nchw4_s8nchw4_s4nhwc_iconv_sm75.cu
+  simt_int8_s8nchw4_s8nchw4_u4nhwc_iconv_sm75.cu
+  simt_int8_s8nchw4_s8nchw4_s4nhwc_iconv_sm75_perf.cu
   convolution_s8nchw32_s8chwn32_s8nchw32_tensor_op_s32_sm75_perf.cu
   convolution_s8nchw32_s8chwn32_s8nchw32_tensor_op_s32_sm75.cu
   convolution_s8nchw32_s8chwn32_s8nchw4_tensor_op_s32_sm75_perf.cu

@@ -278,8 +278,6 @@ struct Testbed {
         bool passed = cutlass::reference::host::TensorEquals(
                 reference_dst.host_view(), tensor_dst.host_view());
 
-        EXPECT_TRUE(passed);
-
         if (!passed) {
             std::stringstream fname_ref;
 
@@ -309,6 +307,8 @@ struct Testbed {
 
             file_comp << "Computed =\n" << tensor_dst.host_view();
         }
+
+        EXPECT_TRUE(passed);
 
         return passed;
     }
@@ -470,11 +470,11 @@ template <typename Convolution>
 bool TestAllConvolution() {
     bool passed = true;
 
-    double problem_alpha[] = {1.0};
+    double problem_alpha[] = {0.019980327};
 
-    double problem_beta[] = {-1.0};
+    double problem_beta[] = {-1.001234567};
 
-    double problem_gamma[] = {1.114124184164124};
+    double problem_gamma[] = {0.019990229};
 
     Testbed<Convolution> testbed;
 
@@ -599,8 +599,8 @@ bool TestConvolutionPerf(int iterations = 1, int batch = 64,
                          bool tensor_op = false) {
     bool passed = true;
 
-    double problem_alpha[] = {1.0};
-    double problem_beta[] = {-1.0};
+    double problem_alpha[] = {0.01234567};
+    double problem_beta[] = {-1.07654321};
     double problem_gamma[] = {0.0};
 
     Testbed<Convolution> testbed;
@@ -824,6 +824,56 @@ bool TestDetectionPerf(int iterations = 1, int batch = 16,
 
     return passed;
 }
+
+template <typename Convolution>
+bool BenchFirstConvolution(int iterations = 1, int batch = 16,
+                           bool tensor_op = false) {
+    bool passed = true;
+
+    double problem_alpha[] = {1.0};
+    double problem_beta[] = {-1.0};
+    double problem_gamma[] = {0.0};
+
+    Testbed<Convolution> testbed;
+
+    using ElementCompute =
+            typename Convolution::EpilogueOutputOp::ElementCompute;
+
+    using ConvolutionParameter = cutlass::conv::Conv2dProblemSize;
+    std::vector<ConvolutionParameter> args;
+    cutlass::conv::Mode mode = cutlass::conv::Mode::kCrossCorrelation;
+
+    args.emplace_back(ConvolutionParameter{batch, 224, 224, 4, 64, 7, 7, 112,
+                                           112, 3, 3, 2, 2, 1, 1, mode});
+    args.emplace_back(ConvolutionParameter{batch, 768, 1280, 4, 16, 3, 3, 384,
+                                           640, 1, 1, 2, 2, 1, 1, mode});
+
+    bool verify = true;
+    int cnt = 0;
+    for (auto arg : args) {
+        for (auto alpha : problem_alpha) {
+            for (auto beta : problem_beta) {
+                for (auto gamma : problem_gamma) {
+                    passed = testbed.perf(
+                            arg, cutlass::from_real<ElementCompute>(alpha),
+                            cutlass::from_real<ElementCompute>(beta),
+                            cutlass::from_real<ElementCompute>(gamma),
+                            iterations, verify);
+
+                    cnt++;
+                    if (cnt >= 5)
+                        verify = false;
+                    if (!passed) {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+
+    return passed;
+}
+
 }  // namespace device
 }  // namespace convolution
 }  // namespace test

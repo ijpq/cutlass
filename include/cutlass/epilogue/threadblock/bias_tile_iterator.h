@@ -579,6 +579,211 @@ public:
 ////////////////////////////////////////////////////////////////////////////////
 
 template <typename ThreadMap_,  ///< Thread map (conept: OutputTileThreadMap)
+          typename Element_,    ///< Element data type
+          int ElementsPerAccess>
+class PerChannelBiasPredicatedTileIterator<ThreadMap_, layout::TensorNHWC,
+                                           Element_, ElementsPerAccess> {
+public:
+    using ThreadMap = ThreadMap_;
+    using Shape = typename ThreadMap::Shape;
+
+    using Element = Element_;
+
+    using Layout = layout::TensorNHWC;
+    using TensorRef = TensorRef<Element, Layout>;
+    using ConstTensorRef = typename TensorRef::ConstTensorRef;
+
+    using Index = typename Layout::Index;
+    using LongIndex = typename Layout::LongIndex;
+    using TensorCoord = typename Layout::TensorCoord;
+
+    /// Logical layout
+    using LogicalLayout = layout::ColumnMajor;
+
+    /// Logical tensor coord
+    using LogicalCoord = typename LogicalLayout::TensorCoord;
+
+    static int const kElementsPerAccess = ElementsPerAccess;
+    static int const kThreads = ThreadMap::kThreads;
+    static int const kIterations = ThreadMap::Count::kTile;
+
+    static_assert(ThreadMap::Iterations::kRow > 0,
+                  "ThreadMap::Iterations::kRow must be > 0");
+    static_assert(ThreadMap::Iterations::kGroup > 0,
+                  "ThreadMap::Iterations::kGroup must be > 0");
+    static_assert(ThreadMap::Iterations::kCluster > 0,
+                  "ThreadMap::Iterations::kCluster must be > 0");
+    static_assert(ThreadMap::Iterations::kColumn > 0,
+                  "ThreadMap::Iterations::kColumn must be > 0");
+
+    /// Fragment object
+    using Fragment =
+            Array<Element, ThreadMap::Iterations::kColumn * kElementsPerAccess>;
+
+    /// Memory access size
+    using AccessType = AlignedArray<Element, kElementsPerAccess>;
+
+    //
+    // Parameters struct
+    //
+
+    struct Params {
+        //
+        // Data members
+        //
+        LongIndex stride;
+
+        //
+        // Methods
+        //
+
+        CUTLASS_HOST_DEVICE
+        Status initialize(Index /* stride_ */) {
+            stride = sizeof_bits<Element>::value / 8;
+
+            return Status::kSuccess;
+        }
+
+        CUTLASS_HOST_DEVICE
+        Params() { initialize(0); }
+
+        CUTLASS_HOST_DEVICE
+        Params(Layout const& /* layout */) { initialize(0); }
+    };
+
+    /// Mask object
+    struct Mask {};
+
+private:
+    //
+    // Data members
+    //
+
+    /// Parameters structure containing reference and precomputed state.
+    Params params_;
+
+    /// Byte-level pointer
+    uint8_t* byte_pointer_;
+
+    /// Extent of the matrix tile in rows
+    Index extent_row_;
+
+    /// A thread's starting row position (assuming steady-state predicates have
+    /// been computed)
+    Index thread_start_row_;
+
+    /// Internal state
+    Index state_;
+
+private:
+    //
+    // Methods
+    //
+
+public:
+    //
+    // Methods
+    //
+
+    /// Constructor
+    CUTLASS_DEVICE
+    PerChannelBiasPredicatedTileIterator(
+            Params const& params, Element* pointer, LogicalCoord extent,
+            int thread_idx, LogicalCoord threadblock_offset = LogicalCoord())
+            : params_(params) {
+        MatrixCoord thread_offset_ = ThreadMap::initial_offset(thread_idx);
+        Index channel_offset = thread_offset_.row() + threadblock_offset.row();
+
+        extent_row_ = extent.row();
+        thread_start_row_ = channel_offset;
+
+        // Initialize pointer
+        byte_pointer_ = reinterpret_cast<uint8_t*>(pointer) +
+                        channel_offset * sizeof_bits<Element>::value / 8;
+
+        state_ = 0;
+    }
+
+    /// Adds a pointer offset in units of Element
+    CUTLASS_HOST_DEVICE
+    void add_pointer_offset(LongIndex pointer_offset) {
+        byte_pointer_ += pointer_offset * sizeof_bits<Element>::value / 8;
+    }
+
+    /// Loads a fragment from memory
+    CUTLASS_DEVICE
+    void load_with_byte_offset(Fragment& frag, int64_t byte_offset) {
+        uint8_t* byte_pointer = byte_pointer_;
+        AccessType* frag_ptr = reinterpret_cast<AccessType*>(&frag);
+        AccessType* memory_pointer =
+                reinterpret_cast<AccessType*>(byte_pointer + byte_offset);
+
+        CUTLASS_PRAGMA_UNROLL
+        for (int column = 0; column < ThreadMap::Iterations::kColumn;
+             ++column) {
+            int row_offset = column * ThreadMap::Delta::kColumn;
+            bool guard = ((row_offset + thread_start_row_) < extent_row_);
+
+            cutlass::arch::global_load<AccessType, sizeof(AccessType)>(
+                    frag_ptr[column],
+                    (void*)&memory_pointer[row_offset / kElementsPerAccess],
+                    guard);
+        }
+
+        if (state_ == 0)
+            state_++;
+    }
+
+    /// Loads a fragment from memory
+    CUTLASS_DEVICE
+    void load(Fragment& frag) { load_with_byte_offset(frag, 0); }
+
+    /// Stores a fragment to memory
+    CUTLASS_DEVICE
+    void store_with_byte_offset(Fragment const& frag, int64_t byte_offset) {
+        uint8_t* byte_pointer = byte_pointer_;
+        AccessType const* frag_ptr = reinterpret_cast<AccessType const*>(&frag);
+        AccessType* memory_pointer =
+                reinterpret_cast<AccessType*>(byte_pointer + byte_offset);
+        CUTLASS_PRAGMA_UNROLL
+        for (int column = 0; column < ThreadMap::Iterations::kColumn;
+             ++column) {
+            int row_offset = column * ThreadMap::Delta::kColumn;
+
+            bool guard = ((row_offset + thread_start_row_) < extent_row_);
+            cutlass::arch::global_store<AccessType, sizeof(AccessType)>(
+                    frag_ptr[column],
+                    (void*)&memory_pointer[row_offset / kElementsPerAccess],
+                    guard);
+        }
+    }
+
+    /// Stores a fragment to memory
+    CUTLASS_DEVICE
+    void store(Fragment const& frag) { store_with_byte_offset(frag, 0); }
+
+    /// Advances to the next position to load or store
+    CUTLASS_HOST_DEVICE
+    PerChannelBiasPredicatedTileIterator& operator++() { return *this; }
+
+    ///< Efficiently disables all accesses guarded by mask
+    CUTLASS_DEVICE void clear_mask() {}
+
+    ///< Efficiently enables all accesses guarded by mask
+    CUTLASS_DEVICE void enable_mask() {}
+
+    ///< Sets the mask
+    CUTLASS_DEVICE void get_mask(Mask& /*mask */) {}
+
+    ///< Sets the mask
+    CUTLASS_DEVICE void set_mask(Mask const& /*mask */) {}
+
+    CUTLASS_DEVICE bool valid() { return state_ == 0; }
+};
+
+////////////////////////////////////////////////////////////////////////////////
+
+template <typename ThreadMap_,  ///< Thread map (conept: OutputTileThreadMap)
           typename Layout_,     ///< Tensor layout
           typename Element_,    ///< Element data type
           int ElementsPerAccess = 1  ///< Elements per access
