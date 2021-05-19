@@ -71,6 +71,7 @@ enum {
 #include <cuda_fp16.h>
 
 #include "cutlass/cutlass.h"
+#include "cutlass/platform/platform.h"
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -509,9 +510,9 @@ half_t copysign(half_t const& a, half_t const& b) {
 //
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-namespace std {
+namespace cutlass {
+namespace platform {
 
-#if !defined(__CUDACC_RTC__)
 /// Numeric limits
 template <>
 struct numeric_limits<cutlass::half_t> {
@@ -567,9 +568,9 @@ struct numeric_limits<cutlass::half_t> {
         return cutlass::half_t::bitcast(0x0001);
     }
 };
-#endif
 
-}  // namespace std
+}  // namespace platform
+}  // namespace cutlass
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 //

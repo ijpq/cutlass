@@ -547,12 +547,14 @@ public:
                                     intermediate);  // D = alpha * Accum + X
 
         /// Clamping constant value
-        ElementCompute const kClamp =
-                ElementCompute(1 << (sizeof_bits<ElementOutput>::value - 1));
+        ElementCompute const kClampMax =
+                ElementCompute(platform::numeric_limits<ElementOutput>::max());
 
-        intermediate = max_accumulator(intermediate, -kClamp);
-        intermediate =
-                min_accumulator(intermediate, kClamp - ElementCompute(1));
+        ElementCompute const kClampMin = ElementCompute(
+                platform::numeric_limits<ElementOutput>::lowest());
+
+        intermediate = max_accumulator(intermediate, kClampMin);
+        intermediate = min_accumulator(intermediate, kClampMax);
 
         // Convert to destination numeric type
         FastNumericArrayConverter<ElementOutput, ElementCompute, kCount, Round>
@@ -584,12 +586,14 @@ public:
         intermediate = mul_accumulator(alpha_, converted_accumulator);
 
         /// Clamping constant value
-        ElementCompute const kClamp =
-                ElementCompute(1 << (sizeof_bits<ElementOutput>::value - 1));
+        ElementCompute const kClampMax =
+                ElementCompute(platform::numeric_limits<ElementOutput>::max());
 
-        intermediate = max_accumulator(intermediate, -kClamp);
-        intermediate =
-                min_accumulator(intermediate, kClamp - ElementCompute(1));
+        ElementCompute const kClampMin = ElementCompute(
+                platform::numeric_limits<ElementOutput>::lowest());
+
+        intermediate = max_accumulator(intermediate, kClampMin);
+        intermediate = min_accumulator(intermediate, kClampMax);
 
         // Convert to destination numeric type
         FastNumericArrayConverter<ElementOutput, ElementCompute, kCount, Round>

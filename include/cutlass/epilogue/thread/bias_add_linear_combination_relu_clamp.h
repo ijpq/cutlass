@@ -225,12 +225,14 @@ public:
         intermediate = relu(threshold_, intermediate);
 
         /// Clamping constant value
-        ElementCompute const kClamp = ElementCompute(
-                (1U << (sizeof_bits<ElementOutput>::value - 1)) - 1);
+        ElementCompute const kClampMax =
+                ElementCompute(platform::numeric_limits<ElementOutput>::max());
 
-        intermediate =
-                max_accumulator(intermediate, -kClamp - ElementCompute(1));
-        intermediate = min_accumulator(intermediate, kClamp);
+        ElementCompute const kClampMin = ElementCompute(
+                platform::numeric_limits<ElementOutput>::lowest());
+
+        intermediate = max_accumulator(intermediate, kClampMin);
+        intermediate = min_accumulator(intermediate, kClampMax);
 
         // Convert to destination numeric type
         OutputConverter destination_converter;
@@ -269,12 +271,14 @@ public:
         intermediate = relu(threshold_, intermediate);
 
         /// Clamping constant value
-        ElementCompute const kClamp = ElementCompute(
-                (1U << (sizeof_bits<ElementOutput>::value - 1)) - 1);
+        ElementCompute const kClampMax =
+                ElementCompute(platform::numeric_limits<ElementOutput>::max());
 
-        intermediate =
-                max_accumulator(intermediate, -kClamp - ElementCompute(1));
-        intermediate = min_accumulator(intermediate, kClamp);
+        ElementCompute const kClampMin = ElementCompute(
+                platform::numeric_limits<ElementOutput>::lowest());
+
+        intermediate = max_accumulator(intermediate, kClampMin);
+        intermediate = min_accumulator(intermediate, kClampMax);
 
         // Convert to destination numeric type
         OutputConverter destination_converter;
@@ -315,12 +319,14 @@ public:
         intermediate = relu(threshold_, intermediate);
 
         /// Clamping constant value
-        ElementCompute const kClamp = ElementCompute(
-                (1U << (sizeof_bits<ElementOutput>::value - 1)) - 1);
+        ElementCompute const kClampMax =
+                ElementCompute(platform::numeric_limits<ElementOutput>::max());
 
-        intermediate =
-                max_accumulator(intermediate, -kClamp - ElementCompute(1));
-        intermediate = min_accumulator(intermediate, kClamp);
+        ElementCompute const kClampMin = ElementCompute(
+                platform::numeric_limits<ElementOutput>::lowest());
+
+        intermediate = max_accumulator(intermediate, kClampMin);
+        intermediate = min_accumulator(intermediate, kClampMax);
 
         // Convert to destination numeric type
         OutputConverter destination_converter;
@@ -352,12 +358,14 @@ public:
         intermediate = relu(threshold_, intermediate);
 
         /// Clamping constant value
-        ElementCompute const kClamp = ElementCompute(
-                (1U << (sizeof_bits<ElementOutput>::value - 1)) - 1);
+        ElementCompute const kClampMax =
+                ElementCompute(platform::numeric_limits<ElementOutput>::max());
 
-        intermediate =
-                max_accumulator(intermediate, -kClamp - ElementCompute(1));
-        intermediate = min_accumulator(intermediate, kClamp);
+        ElementCompute const kClampMin = ElementCompute(
+                platform::numeric_limits<ElementOutput>::lowest());
+
+        intermediate = max_accumulator(intermediate, kClampMin);
+        intermediate = min_accumulator(intermediate, kClampMax);
 
         // Convert to destination numeric type
         OutputConverter destination_converter;
