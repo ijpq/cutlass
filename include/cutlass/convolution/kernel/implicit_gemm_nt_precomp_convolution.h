@@ -116,6 +116,10 @@ struct ImplicitGemmNtPrecompConvolution {
     using WarpCount = typename Mma::WarpCount;
     static int const kThreadCount = 32 * WarpCount::kCount;
 
+    struct ExtraParam {
+        typename Mma::IteratorSrc::Params::ExtraParam extra_param_src;
+    };
+
     /// Argument structure
     struct Arguments {
         ConvProblemSize problem_size;
@@ -127,6 +131,7 @@ struct ImplicitGemmNtPrecompConvolution {
         typename EpilogueOutputOp::Params output_op;
         typename Mma::TransformSrc::Params transform_src;
         typename Mma::TransformFilter::Params transform_filter;
+        ExtraParam extra_param;
 
         /// Default ctor
         CUTLASS_HOST_DEVICE
@@ -148,7 +153,8 @@ struct ImplicitGemmNtPrecompConvolution {
                   typename Mma::TransformSrc::Params transform_src_ =
                           typename Mma::TransformSrc::Params(),
                   typename Mma::TransformFilter::Params transform_filter_ =
-                          typename Mma::TransformFilter::Params())
+                          typename Mma::TransformFilter::Params(),
+                  ExtraParam extra_param_ = {})
                 : problem_size(problem_size_),
                   ref_src(ref_src_),
                   ref_filter(ref_filter_),
@@ -157,7 +163,8 @@ struct ImplicitGemmNtPrecompConvolution {
                   ref_dst(ref_dst_),
                   output_op(epilogue_),
                   transform_src(transform_src_),
-                  transform_filter(transform_filter_) {}
+                  transform_filter(transform_filter_),
+                  extra_param(extra_param_) {}
     };
 
     /// Parameters structure
@@ -195,7 +202,8 @@ struct ImplicitGemmNtPrecompConvolution {
                int* workspace_ = nullptr)
                 : problem_size(args.problem_size),
                   grid_tiled_shape(grid_tiled_shape_),
-                  params_src(args.ref_src.layout(), args.problem_size),
+                  params_src(args.ref_src.layout(), args.problem_size,
+                             args.extra_param.extra_param_src),
                   ref_src(args.ref_src),
                   params_filter(args.ref_filter.layout()),
                   ref_filter(args.ref_filter),

@@ -60,7 +60,7 @@ namespace thread {
 /// Applies a linear combination operator to an array of elements then
 /// clamps the output before converting to the output element type.
 ///
-/// D = alpha * accumulator + beta * bias + gamma * source
+/// D = alpha * accumulator + beta * bias + gamma * source + delta
 ///
 template <typename ElementOutput_,  ///< Data type used to load and store
                                     ///< tensors
@@ -101,11 +101,14 @@ public:
         ElementCompute alpha;             ///< scales accumulators
         ElementCompute beta;              ///< scales bias tensor
         ElementCompute gamma;             ///< scales source tensor
+        ElementCompute delta;             ///< add constant
         ElementCompute const* alpha_ptr;  ///< pointer to accumulator scalar -
                                           ///< if not null, loads it from memory
         ElementCompute const* beta_ptr;   ///< pointer to bias scalar - if not
                                           ///< null loads it from memory
         ElementCompute const* gamma_ptr;  ///< pointer to source scalar - if not
+                                          ///< null, loads it from memory
+        ElementCompute const* delta_ptr;  ///< pointer to source scalar - if not
                                           ///< null, loads it from memory
 
         //
@@ -117,28 +120,36 @@ public:
                 : alpha(ElementCompute(1)),
                   beta(ElementCompute(1)),
                   gamma(ElementCompute(0)),
+                  delta(ElementCompute(0)),
                   alpha_ptr(nullptr),
                   beta_ptr(nullptr),
-                  gamma_ptr(nullptr) {}
+                  gamma_ptr(nullptr),
+                  delta_ptr(nullptr) {}
 
         CUTLASS_HOST_DEVICE
-        Params(ElementCompute alpha, ElementCompute beta, ElementCompute gamma)
+        Params(ElementCompute alpha, ElementCompute beta, ElementCompute gamma,
+               ElementCompute delta = ElementCompute(0))
                 : alpha(alpha),
                   beta(beta),
                   gamma(gamma),
+                  delta(delta),
                   alpha_ptr(nullptr),
                   beta_ptr(nullptr),
-                  gamma_ptr(nullptr) {}
+                  gamma_ptr(nullptr),
+                  delta_ptr(nullptr) {}
 
         CUTLASS_HOST_DEVICE
         Params(ElementCompute const* alpha_ptr, ElementCompute const* beta_ptr,
-               ElementCompute const* gamma_ptr)
+               ElementCompute const* gamma_ptr,
+               ElementCompute const* delta_ptr = nullptr)
                 : alpha(0),
                   beta(0),
                   gamma(0),
+                  delta(0),
                   alpha_ptr(alpha_ptr),
                   beta_ptr(beta_ptr),
-                  gamma_ptr(gamma_ptr) {}
+                  gamma_ptr(gamma_ptr),
+                  delta_ptr(delta_ptr) {}
     };
 
 private:
@@ -149,6 +160,7 @@ private:
     ElementCompute alpha_;
     ElementCompute beta_;
     ElementCompute gamma_;
+    ElementCompute delta_;
 
 public:
     /// Constructs the function object, possibly loading from pointers in host
@@ -158,6 +170,7 @@ public:
         alpha_ = (params.alpha_ptr ? *params.alpha_ptr : params.alpha);
         beta_ = (params.beta_ptr ? *params.beta_ptr : params.beta);
         gamma_ = (params.gamma_ptr ? *params.gamma_ptr : params.gamma);
+        delta_ = (params.delta_ptr ? *params.delta_ptr : params.delta);
     }
 
     /// Returns true if bias is needed
@@ -169,7 +182,7 @@ public:
     bool is_source_needed() const { return gamma_ != ElementCompute(0); }
 
     /// Computes linear scaling: D = alpha * accumulator + beta * bias + gamma *
-    /// source
+    /// source + delta
     CUTLASS_HOST_DEVICE
     FragmentOutput apply_add_bias_source(FragmentAccumulator const& accumulator,
                                          FragmentBias const& bias,
@@ -191,6 +204,7 @@ public:
         multiplies<ComputeFragment> mul_add_source;
         multiply_add<ComputeFragment> mul_add_accumulator;
         multiply_add<ComputeFragmentBias> mul_add_bias;
+        plus<ComputeFragment> plus_delta;
 
         minimum<ComputeFragment> min_accumulator;
         maximum<ComputeFragment> max_accumulator;
@@ -201,7 +215,8 @@ public:
                 mul_add_accumulator(alpha_, converted_accumulator,
                                     intermediate);  // D = alpha * Accum + X
         intermediate = mul_add_bias(beta_, converted_bias,
-                                    intermediate);  // D = beta * bias + D
+                                    intermediate);        // D = beta * bias + D
+        intermediate = plus_delta(delta_, intermediate);  // D = D + delta
 
         /// Clamping constant value
         ElementCompute const kClampMax =
@@ -219,7 +234,7 @@ public:
         return destination_converter(intermediate);
     }
 
-    /// Computes linear scaling: D = alpha * accumulator + beta * bias
+    /// Computes linear scaling: D = alpha * accumulator + beta * bias + delta
     CUTLASS_HOST_DEVICE
     FragmentOutput apply_add_bias(FragmentAccumulator const& accumulator,
                                   FragmentBias const& bias) const {
@@ -237,6 +252,7 @@ public:
 
         multiplies<ComputeFragment> mul_accumulator;
         multiply_add<ComputeFragmentBias> mul_add_bias;
+        plus<ComputeFragment> plus_delta;
 
         minimum<ComputeFragment> min_accumulator;
         maximum<ComputeFragment> max_accumulator;
@@ -244,7 +260,8 @@ public:
         intermediate = mul_accumulator(
                 alpha_, converted_accumulator);  // D = alpha * Accum
         intermediate = mul_add_bias(beta_, converted_bias,
-                                    intermediate);  // D = beta * bias + D
+                                    intermediate);        // D = beta * bias + D
+        intermediate = plus_delta(delta_, intermediate);  // D = D + delta
 
         /// Clamping constant value
         ElementCompute const kClampMax =
@@ -262,7 +279,8 @@ public:
         return destination_converter(intermediate);
     }
 
-    /// Computes linear scaling: D = alpha * accumulator + gamma * source
+    /// Computes linear scaling: D = alpha * accumulator + gamma * source +
+    /// delta
     CUTLASS_HOST_DEVICE
     FragmentOutput apply_add_source(FragmentAccumulator const& accumulator,
                                     FragmentOutput const& source) const {
@@ -280,6 +298,7 @@ public:
 
         multiplies<ComputeFragment> mul_add_source;
         multiply_add<ComputeFragment> mul_add_accumulator;
+        plus<ComputeFragment> plus_delta;
 
         minimum<ComputeFragment> min_accumulator;
         maximum<ComputeFragment> max_accumulator;
@@ -289,6 +308,7 @@ public:
         intermediate =
                 mul_add_accumulator(alpha_, converted_accumulator,
                                     intermediate);  // D = alpha * Accum + X
+        intermediate = plus_delta(delta_, intermediate);  // D = D + delta
 
         /// Clamping constant value
         ElementCompute const kClampMax =
@@ -306,7 +326,7 @@ public:
         return destination_converter(intermediate);
     }
 
-    /// Computes linear scaling: D = alpha * accumulator
+    /// Computes linear scaling: D = alpha * accumulator + delta
     CUTLASS_HOST_DEVICE
     FragmentOutput apply(FragmentAccumulator const& accumulator) const {
         AccumulatorConverter accumulator_converter;
@@ -318,12 +338,14 @@ public:
         ComputeFragment intermediate;
 
         multiplies<ComputeFragment> mul_add_source;
+        plus<ComputeFragment> plus_delta;
 
         minimum<ComputeFragment> min_accumulator;
         maximum<ComputeFragment> max_accumulator;
 
         intermediate = mul_add_source(alpha_,
                                       converted_accumulator);  // X =  alpha * C
+        intermediate = plus_delta(delta_, intermediate);       // D = D + delta
 
         /// Clamping constant value
         ElementCompute const kClampMax =

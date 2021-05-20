@@ -87,6 +87,7 @@
  *           - \p aligned_storage
  *
  *   (4) Functions and types that are STL-like (but aren't in the STL):
+ *           - \p none_type
  *           - \p TODO: min and max functors?
  *
  * The idea is that, as we drop support for older compilers, we can simply
@@ -881,6 +882,12 @@ struct numeric_limits<uint8_t> {
     CUTLASS_HOST_DEVICE
     static constexpr uint8_t max() noexcept { return 255; }
 };
+
+//-----------------------------------------------------------------------------
+// Other utilities
+//-----------------------------------------------------------------------------
+
+struct none_type {};
 
 }  // namespace platform
 }  // namespace cutlass

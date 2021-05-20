@@ -157,6 +157,7 @@ public:
     using Layout = layout::TensorNCxHWx<kInterleaved>;
     using ThreadMap = ThreadMap_;
     using TileMap = TileMap_;
+    using ExtraParam = platform::none_type;
 
     using ShortIndex = int8_t;
     using Index = typename Layout::Index;
@@ -204,7 +205,8 @@ public:
     /// Construct the Params object given a pitch-linear tensor's layout
     CUTLASS_HOST_DEVICE
     DgradPrecompParams(Layout const& layout,
-                       Conv2dProblemSize const& problem_size)
+                       Conv2dProblemSize const& problem_size,
+                       ExtraParam const& /* extra_param */)
             : layout_(layout),
               stride_h_div_mod_(problem_size.stride_h),
               stride_w_div_mod_(problem_size.stride_w),
@@ -244,6 +246,7 @@ public:
     using Layout = layout::TensorNCxHWx<kInterleaved>;
     using ThreadMap = ThreadMap_;
     using TileMap = TileMap_;
+    using ExtraParam = platform::none_type;
 
     using ShortIndex = int8_t;
     using Index = typename Layout::Index;
@@ -279,7 +282,8 @@ public:
     /// Construct the Params object given a pitch-linear tensor's layout
     CUTLASS_HOST_DEVICE
     DgradPrecompParams(Layout const& layout,
-                       Conv2dProblemSize const& problem_size)
+                       Conv2dProblemSize const& problem_size,
+                       ExtraParam const& /* extra_param */)
             : layout_(layout),
               tile_map_(
                       TileMap(problem_size.H * problem_size.W, problem_size.W)),

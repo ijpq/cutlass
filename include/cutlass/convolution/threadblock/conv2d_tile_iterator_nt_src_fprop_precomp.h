@@ -153,6 +153,21 @@ CUTLASS_HOST_DEVICE void compute_offset_fprop(int* constant_offset_, int fh_,
 }
 }  // namespace detail
 
+////////////////////////////////////////////////////////////////////////////////
+
+struct ExtraParamZeroPoint {
+    uint8_t src_zero_point;
+
+    CUTLASS_HOST_DEVICE
+    ExtraParamZeroPoint() : src_zero_point(0) {}
+
+    CUTLASS_HOST_DEVICE
+    ExtraParamZeroPoint(uint8_t src_zero_point_)
+            : src_zero_point(src_zero_point_) {}
+};
+
+////////////////////////////////////////////////////////////////////////////////
+
 template <typename Shape, typename Element, typename Layout, typename ThreadMap,
           typename TileMap, bool NeedLoadFromConstMem = true>
 class FpropPrecompParams;
@@ -169,6 +184,10 @@ public:
     using Layout = layout::TensorNCxHWx<kInterleaved>;
     using ThreadMap = ThreadMap_;
     using TileMap = TileMap_;
+
+    using ExtraParam = typename platform::conditional<
+            platform::is_same<Element, uint4b_t>::value, ExtraParamZeroPoint,
+            platform::none_type>::type;
 
     using ShortIndex = int8_t;
     using Index = typename Layout::Index;
@@ -207,6 +226,7 @@ public:
     Index constant_offset_max_;
     Index constant_offset_rewind_;
     Index constant_offset_[kPrecomputedOffsetBufferSize];
+    ExtraParam extra_param_;
 
     CUTLASS_HOST_DEVICE
     FpropPrecompParams() : layout_(Layout()), tile_map_(TileMap()) {}
@@ -214,7 +234,8 @@ public:
     /// Construct the Params object given a pitch-linear tensor's layout
     CUTLASS_HOST_DEVICE
     FpropPrecompParams(Layout const& layout,
-                       Conv2dProblemSize const& problem_size)
+                       Conv2dProblemSize const& problem_size,
+                       ExtraParam const& extra_param = {})
             : layout_(layout),
               tile_map_(
                       TileMap(problem_size.P * problem_size.Q, problem_size.Q)),
@@ -224,7 +245,8 @@ public:
               pad_w_(problem_size.pad_w),
               fh_(problem_size.R),
               fw_(problem_size.S),
-              n_(problem_size.N) {
+              n_(problem_size.N),
+              extra_param_(extra_param) {
         hi_ = problem_size.H;
         wi_ = problem_size.W;
         Index conv_iterations =
@@ -263,6 +285,7 @@ public:
     using Layout = layout::TensorNCxHWx<kInterleaved>;
     using ThreadMap = ThreadMap_;
     using TileMap = TileMap_;
+    using ExtraParam = platform::none_type;
 
     using ShortIndex = int8_t;
     using Index = typename Layout::Index;
@@ -296,7 +319,8 @@ public:
     /// Construct the Params object given a pitch-linear tensor's layout
     CUTLASS_HOST_DEVICE
     FpropPrecompParams(Layout const& layout,
-                       Conv2dProblemSize const& problem_size)
+                       Conv2dProblemSize const& problem_size,
+                       ExtraParam const& extra_param = {})
             : layout_(layout),
               tile_map_(
                       TileMap(problem_size.P * problem_size.Q, problem_size.Q)),
@@ -332,6 +356,23 @@ public:
 template <typename Shape, typename Element, typename Layout, typename ThreadMap,
           int AccessSize, typename TileMap, bool NeedLoadFromConstMem = true>
 class Conv2dTileSrcIteratorFpropPrecomp;
+
+////////////////////////////////////////////////////////////////////////////////
+
+template <typename AccessType, typename ExtraParam>
+CUTLASS_HOST_DEVICE void prepare_zero_point_array(AccessType& zero_point_array,
+                                                  const ExtraParam& params) {}
+
+template <typename AccessType>
+CUTLASS_HOST_DEVICE void prepare_zero_point_array(
+        AccessType& zero_point_array, const ExtraParamZeroPoint& params) {
+    static_assert(
+            platform::is_same<typename AccessType::Element, uint4b_t>::value,
+            "invalid usage");
+    for (size_t i = 0; i < AccessType::kElements; i++) {
+        zero_point_array[i] = params.src_zero_point;
+    }
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -427,6 +468,8 @@ public:
     using Params = FpropPrecompParams<Shape, Element,
                                       layout::TensorNCxHWx<kInterleaved>,
                                       ThreadMap, TileMap, true>;
+
+    using ExtraParam = typename Params::ExtraParam;
 
 private:
     //
@@ -795,6 +838,8 @@ public:
     using Params = FpropPrecompParams<Shape, Element,
                                       layout::TensorNCxHWx<kInterleaved>,
                                       ThreadMap, TileMap, true>;
+
+    using ExtraParam = typename Params::ExtraParam;
 
 private:
     //
@@ -1251,6 +1296,8 @@ public:
                                       layout::TensorNCxHWx<kInterleaved>,
                                       ThreadMap, TileMap, true>;
 
+    using ExtraParam = typename Params::ExtraParam;
+
 private:
     //
     // Data members
@@ -1276,6 +1323,9 @@ private:
 
     /// Used for out-of-order visitation
     bool is_residue_tile_;
+
+    // precomputed array for src zero point
+    AccessType zero_point_array_;
 
 private:
     CUTLASS_DEVICE
@@ -1365,6 +1415,9 @@ public:
         initialize_predicate_and_pointers_(pointer, thread_offset.column());
 
         residue_extent_ = residue_extent_ - thread_offset.row();
+
+        // used only when ExtraParam is ExtraParamZeroPoint
+        prepare_zero_point_array(zero_point_array_, params.extra_param_);
     }
 
     /// Construct a Conv2dTileSrcIteratorFpropPrecomp with zero threadblock
@@ -1533,8 +1586,25 @@ public:
                     AccessType const* access_ptr =
                             reinterpret_cast<AccessType const*>(byte_ptr);
 
-                    cutlass::arch::global_load<AccessType, sizeof(AccessType)>(
-                            frag_ptr[idx], access_ptr, guard);
+                    if (platform::is_same<Element, uint4b_t>::value) {
+                        // Specially for uint4b_t x int4b_t: load src_zero_point
+                        // instead of 0 when guard is false. If Element is not
+                        // uint4b_t, this branch is expected to be elminated by
+                        // compiler DCE optimization
+                        if (guard) {
+                            cutlass::arch::global_load<AccessType,
+                                                       sizeof(AccessType)>(
+                                    frag_ptr[idx], access_ptr, guard);
+                        } else {
+                            AccessType* p = reinterpret_cast<AccessType*>(
+                                    &(frag_ptr[idx]));
+                            *p = zero_point_array_;
+                        }
+                    } else {
+                        cutlass::arch::global_load<AccessType,
+                                                   sizeof(AccessType)>(
+                                frag_ptr[idx], access_ptr, guard);
+                    }
                 }
             }
         }
@@ -1704,6 +1774,8 @@ public:
     using Params = FpropPrecompParams<Shape, Element,
                                       layout::TensorNCxHWx<kInterleaved>,
                                       ThreadMap, TileMap, false>;
+
+    using ExtraParam = typename Params::ExtraParam;
 
 private:
     //

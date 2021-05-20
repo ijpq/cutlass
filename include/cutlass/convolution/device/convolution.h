@@ -161,6 +161,7 @@ public:
     using TensorRefDst = typename ConvolutionKernel::TensorRefDst;
 
     using Arguments = typename ConvolutionKernel::Arguments;
+    using ExtraParam = typename ConvolutionKernel::ExtraParam;
 
     using ConvolutionParameter = typename ConvolutionKernel::ConvProblemSize;
 
@@ -224,6 +225,7 @@ public:
         params_.output_op = args.output_op;
         params_.transform_src = args.transform_src;
         params_.transform_filter = args.transform_filter;
+        params_.extra_param = args.extra_param;
         params_.workspace = static_cast<int*>(workspace);
 
         return Status::kSuccess;
@@ -387,6 +389,7 @@ public:
     using TensorRefDst = typename ConvolutionKernel::TensorRefDst;
 
     using Arguments = typename ConvolutionKernel::Arguments;
+    using ExtraParam = typename ConvolutionKernel::ExtraParam;
 
     using ConvolutionParameter = typename ConvolutionKernel::ConvProblemSize;
 
@@ -450,6 +453,7 @@ public:
         params_.output_op = args.output_op;
         params_.transform_src = args.transform_src;
         params_.transform_filter = args.transform_filter;
+        params_.extra_param = args.extra_param;
         params_.workspace = static_cast<int*>(workspace);
 
         return Status::kSuccess;

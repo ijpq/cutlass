@@ -115,6 +115,8 @@ struct ImplicitGemmNtConvolution {
     using WarpCount = typename Mma::WarpCount;
     static int const kThreadCount = 32 * WarpCount::kCount;
 
+    using ExtraParam = platform::none_type;
+
     /// Argument structure
     struct Arguments {
         ConvProblemSize problem_size;
