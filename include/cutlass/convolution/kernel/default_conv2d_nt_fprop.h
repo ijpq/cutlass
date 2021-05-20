@@ -556,7 +556,7 @@ struct DefaultConv2dNtFprop<
         InstructionShape, EpilogueOutputOp, ThreadblockSwizzle, 2,
         MathOperatorTag, kAlignmentSrc, kAlignmentFilter,
         NeedLoadFromConstMem> {
-    static_assert(Interleaved == 64);
+    static_assert(Interleaved == 64, "Interleaved must be divisible by 64");
 
     using ElementSrc = integer_subbyte<4, Signed>;
     using ElementFilter = int4b_t;
