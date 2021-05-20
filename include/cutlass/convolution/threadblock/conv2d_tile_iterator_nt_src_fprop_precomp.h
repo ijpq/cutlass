@@ -166,6 +166,23 @@ struct ExtraParamZeroPoint {
             : src_zero_point(src_zero_point_) {}
 };
 
+namespace detail {
+template <typename Element, typename ExtraParam>
+CUTLASS_HOST_DEVICE uint32_t prepare_pack_pad(const ExtraParam& params) {
+    return 0;
+}
+
+template <>
+CUTLASS_HOST_DEVICE uint32_t prepare_pack_pad<uint4b_t, ExtraParamZeroPoint>(
+        const ExtraParamZeroPoint& params) {
+    uint32_t ret = 0;
+    for (size_t i = 0; i < 8; i++) {
+        ret |= params.src_zero_point << (4 * i);
+    }
+    return ret;
+}
+}  // namespace detail
+
 ////////////////////////////////////////////////////////////////////////////////
 
 template <typename Shape, typename Element, typename Layout, typename ThreadMap,
@@ -356,23 +373,6 @@ public:
 template <typename Shape, typename Element, typename Layout, typename ThreadMap,
           int AccessSize, typename TileMap, bool NeedLoadFromConstMem = true>
 class Conv2dTileSrcIteratorFpropPrecomp;
-
-////////////////////////////////////////////////////////////////////////////////
-
-template <typename AccessType, typename ExtraParam>
-CUTLASS_HOST_DEVICE void prepare_zero_point_array(AccessType& zero_point_array,
-                                                  const ExtraParam& params) {}
-
-template <typename AccessType>
-CUTLASS_HOST_DEVICE void prepare_zero_point_array(
-        AccessType& zero_point_array, const ExtraParamZeroPoint& params) {
-    static_assert(
-            platform::is_same<typename AccessType::Element, uint4b_t>::value,
-            "invalid usage");
-    for (size_t i = 0; i < AccessType::kElements; i++) {
-        zero_point_array[i] = params.src_zero_point;
-    }
-}
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -1324,8 +1324,8 @@ private:
     /// Used for out-of-order visitation
     bool is_residue_tile_;
 
-    // precomputed array for src zero point
-    AccessType zero_point_array_;
+    // packed padding for src zero point
+    uint32_t pack_pad_;
 
 private:
     CUTLASS_DEVICE
@@ -1416,8 +1416,8 @@ public:
 
         residue_extent_ = residue_extent_ - thread_offset.row();
 
-        // used only when ExtraParam is ExtraParamZeroPoint
-        prepare_zero_point_array(zero_point_array_, params.extra_param_);
+        pack_pad_ = detail::prepare_pack_pad<Element, ExtraParam>(
+                params.extra_param_);
     }
 
     /// Construct a Conv2dTileSrcIteratorFpropPrecomp with zero threadblock
@@ -1586,25 +1586,8 @@ public:
                     AccessType const* access_ptr =
                             reinterpret_cast<AccessType const*>(byte_ptr);
 
-                    if (platform::is_same<Element, uint4b_t>::value) {
-                        // Specially for uint4b_t x int4b_t: load src_zero_point
-                        // instead of 0 when guard is false. If Element is not
-                        // uint4b_t, this branch is expected to be elminated by
-                        // compiler DCE optimization
-                        if (guard) {
-                            cutlass::arch::global_load<AccessType,
-                                                       sizeof(AccessType)>(
-                                    frag_ptr[idx], access_ptr, guard);
-                        } else {
-                            AccessType* p = reinterpret_cast<AccessType*>(
-                                    &(frag_ptr[idx]));
-                            *p = zero_point_array_;
-                        }
-                    } else {
-                        cutlass::arch::global_load<AccessType,
-                                                   sizeof(AccessType)>(
-                                frag_ptr[idx], access_ptr, guard);
-                    }
+                    cutlass::arch::global_load<AccessType, sizeof(AccessType)>(
+                            frag_ptr[idx], access_ptr, guard, pack_pad_);
                 }
             }
         }

@@ -52,170 +52,183 @@ struct global_load;
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
-// The redundant mov PTX instruction is used to enforce the compiler to
-// initialize data to zero before ld.global
 template <typename AccessType>
 struct global_load<AccessType, 64> {
     CUTLASS_DEVICE
-    global_load(AccessType& D, void const* ptr, bool pred_guard) {
+    global_load(AccessType& D, void const* ptr, bool pred_guard,
+                uint32_t pack_pad = 0) {
         uint4* data = reinterpret_cast<uint4*>(&D);
 
         asm volatile(
                 "{\n"
                 "  .reg .pred p;\n"
-                "  setp.ne.b32 p, %17, 0;\n"
-                "  mov.b32 %0, 0;\n"
-                "  mov.b32 %1, 0;\n"
-                "  mov.b32 %2, 0;\n"
-                "  mov.b32 %3, 0;\n"
-                "  mov.b32 %4, 0;\n"
-                "  mov.b32 %5, 0;\n"
-                "  mov.b32 %6, 0;\n"
-                "  mov.b32 %7, 0;\n"
-                "  mov.b32 %8, 0;\n"
-                "  mov.b32 %9, 0;\n"
-                "  mov.b32 %10, 0;\n"
-                "  mov.b32 %11, 0;\n"
-                "  mov.b32 %12, 0;\n"
-                "  mov.b32 %13, 0;\n"
-                "  mov.b32 %14, 0;\n"
-                "  mov.b32 %15, 0;\n"
-                "  @p ld.global.v4.u32 {%0, %1, %2, %3}, [%16];\n"
-                "  @p ld.global.v4.u32 {%4, %5, %6, %7}, [%34];\n"
-                "  @p ld.global.v4.u32 {%8, %9, %10, %11}, [%35];\n"
-                "  @p ld.global.v4.u32 {%12, %13, %14, %15}, [%36];\n"
+                "  setp.ne.b32 p, %16, 0;\n"
+                "  mov.b32 %0, %17;\n"
+                "  mov.b32 %1, %17;\n"
+                "  mov.b32 %2, %17;\n"
+                "  mov.b32 %3, %17;\n"
+                "  mov.b32 %4, %17;\n"
+                "  mov.b32 %5, %17;\n"
+                "  mov.b32 %6, %17;\n"
+                "  mov.b32 %7, %17;\n"
+                "  mov.b32 %8, %17;\n"
+                "  mov.b32 %9, %17;\n"
+                "  mov.b32 %10, %17;\n"
+                "  mov.b32 %11, %17;\n"
+                "  mov.b32 %12, %17;\n"
+                "  mov.b32 %13, %17;\n"
+                "  mov.b32 %14, %17;\n"
+                "  mov.b32 %15, %17;\n"
+                "  @p ld.global.v4.u32 {%0, %1, %2, %3}, [%18];\n"
+                "  @p ld.global.v4.u32 {%4, %5, %6, %7}, [%19];\n"
+                "  @p ld.global.v4.u32 {%8, %9, %10, %11}, [%20];\n"
+                "  @p ld.global.v4.u32 {%12, %13, %14, %15}, [%21];\n"
                 "}\n"
-                : "=r"(data[0].x), "=r"(data[0].y), "=r"(data[0].z),
-                  "=r"(data[0].w), "=r"(data[1].x), "=r"(data[1].y),
-                  "=r"(data[1].z), "=r"(data[1].w), "=r"(data[2].x),
-                  "=r"(data[2].y), "=r"(data[2].z), "=r"(data[2].w),
-                  "=r"(data[3].x), "=r"(data[3].y), "=r"(data[3].z),
-                  "=r"(data[3].w)
-                : "l"(ptr), "r"((int)pred_guard), "r"(data[0].x),
-                  "r"(data[0].y), "r"(data[0].z), "r"(data[0].w),
-                  "r"(data[1].x), "r"(data[1].y), "r"(data[1].z),
-                  "r"(data[1].w), "r"(data[2].x), "r"(data[2].y),
-                  "r"(data[2].z), "r"(data[2].z), "r"(data[3].x),
-                  "r"(data[3].y), "r"(data[3].z), "r"(data[3].w),
-                  "l"(((uint8_t*)ptr) + 16), "l"(((uint8_t*)ptr) + 32),
-                  "l"(((uint8_t*)ptr) + 48));
+                : "=r"(data[0].x), "=r"(data[0].y),  //  0,  1
+                  "=r"(data[0].z), "=r"(data[0].w),  //  2,  3
+                  "=r"(data[1].x), "=r"(data[1].y),  //  4,  5
+                  "=r"(data[1].z), "=r"(data[1].w),  //  6,  7
+                  "=r"(data[2].x), "=r"(data[2].y),  //  8,  9
+                  "=r"(data[2].z), "=r"(data[2].w),  // 10, 11
+                  "=r"(data[3].x), "=r"(data[3].y),  // 12, 13
+                  "=r"(data[3].z), "=r"(data[3].w)   // 14, 15
+                : "r"((int)pred_guard),              // 16
+                  "r"(pack_pad),                     // 17
+                  "l"(ptr),                          // 18
+                  "l"(((uint8_t*)ptr) + 16),         // 19
+                  "l"(((uint8_t*)ptr) + 32),         // 20
+                  "l"(((uint8_t*)ptr) + 48));        // 21
     }
 };
 
 template <typename AccessType>
 struct global_load<AccessType, 32> {
     CUTLASS_DEVICE
-    global_load(AccessType& D, void const* ptr, bool pred_guard) {
+    global_load(AccessType& D, void const* ptr, bool pred_guard,
+                uint32_t pack_pad = 0) {
         uint4* data = reinterpret_cast<uint4*>(&D);
 
         asm volatile(
                 "{\n"
                 "  .reg .pred p;\n"
-                "  setp.ne.b32 p, %9, 0;\n"
-                "  mov.b32 %0, 0;\n"
-                "  mov.b32 %1, 0;\n"
-                "  mov.b32 %2, 0;\n"
-                "  mov.b32 %3, 0;\n"
-                "  mov.b32 %4, 0;\n"
-                "  mov.b32 %5, 0;\n"
-                "  mov.b32 %6, 0;\n"
-                "  mov.b32 %7, 0;\n"
-                "  @p ld.global.v4.u32 {%0, %1, %2, %3}, [%8];\n"
-                "  @p ld.global.v4.u32 {%4, %5, %6, %7}, [%18];\n"
+                "  setp.ne.b32 p, %8, 0;\n"
+                "  mov.b32 %0, %9;\n"
+                "  mov.b32 %1, %9;\n"
+                "  mov.b32 %2, %9;\n"
+                "  mov.b32 %3, %9;\n"
+                "  mov.b32 %4, %9;\n"
+                "  mov.b32 %5, %9;\n"
+                "  mov.b32 %6, %9;\n"
+                "  mov.b32 %7, %9;\n"
+                "  @p ld.global.v4.u32 {%0, %1, %2, %3}, [%10];\n"
+                "  @p ld.global.v4.u32 {%4, %5, %6, %7}, [%11];\n"
                 "}\n"
-                : "=r"(data[0].x), "=r"(data[0].y), "=r"(data[0].z),
-                  "=r"(data[0].w), "=r"(data[1].x), "=r"(data[1].y),
-                  "=r"(data[1].z), "=r"(data[1].w)
-                : "l"(ptr), "r"((int)pred_guard), "r"(data[0].x),
-                  "r"(data[0].y), "r"(data[0].z), "r"(data[0].w),
-                  "r"(data[1].x), "r"(data[1].y), "r"(data[1].z),
-                  "r"(data[1].w), "l"(((uint8_t*)ptr) + 16));
+                : "=r"(data[0].x), "=r"(data[0].y),  //  0,  1
+                  "=r"(data[0].z), "=r"(data[0].w),  //  2,  3
+                  "=r"(data[1].x), "=r"(data[1].y),  //  4,  5
+                  "=r"(data[1].z), "=r"(data[1].w)   //  6,  7
+                : "r"((int)pred_guard),              //  8
+                  "r"(pack_pad),                     //  9
+                  "l"(ptr),                          // 10
+                  "l"(((uint8_t*)ptr) + 16));        // 11
     }
 };
 
 template <typename AccessType>
 struct global_load<AccessType, 16> {
     CUTLASS_DEVICE
-    global_load(AccessType& D, void const* ptr, bool pred_guard) {
+    global_load(AccessType& D, void const* ptr, bool pred_guard,
+                uint32_t pack_pad = 0) {
         uint4& data = reinterpret_cast<uint4&>(D);
 
         asm volatile(
                 "{\n"
                 "  .reg .pred p;\n"
-                "  setp.ne.b32 p, %5, 0;\n"
-                "  mov.b32 %0, 0;\n"
-                "  mov.b32 %1, 0;\n"
-                "  mov.b32 %2, 0;\n"
-                "  mov.b32 %3, 0;\n"
-                "  @p ld.global.v4.u32 {%0, %1, %2, %3}, [%4];\n"
+                "  setp.ne.b32 p, %4, 0;\n"
+                "  mov.b32 %0, %5;\n"
+                "  mov.b32 %1, %5;\n"
+                "  mov.b32 %2, %5;\n"
+                "  mov.b32 %3, %5;\n"
+                "  @p ld.global.v4.u32 {%0, %1, %2, %3}, [%6];\n"
                 "}\n"
-                : "=r"(data.x), "=r"(data.y), "=r"(data.z), "=r"(data.w)
-                : "l"(ptr), "r"((int)pred_guard), "r"(data.x), "r"(data.y),
-                  "r"(data.z), "r"(data.w));
+                : "=r"(data.x), "=r"(data.y),  // 0, 1
+                  "=r"(data.z), "=r"(data.w)   // 2, 3
+                : "r"((int)pred_guard),        // 4
+                  "r"(pack_pad),               // 5
+                  "l"(ptr));                   // 6
     }
 };
 
 template <typename AccessType>
 struct global_load<AccessType, 8> {
     CUTLASS_DEVICE
-    global_load(AccessType& D, void const* ptr, bool pred_guard) {
+    global_load(AccessType& D, void const* ptr, bool pred_guard,
+                uint32_t pack_pad = 0) {
         uint2& data = reinterpret_cast<uint2&>(D);
 
         asm volatile(
                 "{\n"
                 "  .reg .pred p;\n"
-                "  setp.ne.b32 p, %3, 0;\n"
-                "  mov.b32 %0, 0;\n"
-                "  mov.b32 %1, 0;\n"
-                "  @p ld.global.v2.u32 {%0, %1}, [%2];\n"
+                "  setp.ne.b32 p, %2, 0;\n"
+                "  mov.b32 %0, %3;\n"
+                "  mov.b32 %1, %3;\n"
+                "  @p ld.global.v2.u32 {%0, %1}, [%4];\n"
                 "}\n"
-                : "=r"(data.x), "=r"(data.y)
-                : "l"(ptr), "r"((int)pred_guard), "r"(data.x), "r"(data.y));
+                : "=r"(data.x), "=r"(data.y)                       // 0, 1
+                : "r"((int)pred_guard), "r"(pack_pad), "l"(ptr));  // 2, 3, 4
     }
 };
 
 template <typename AccessType>
 struct global_load<AccessType, 4> {
     CUTLASS_DEVICE
-    global_load(AccessType& D, void const* ptr, bool pred_guard) {
+    global_load(AccessType& D, void const* ptr, bool pred_guard,
+                uint32_t pack_pad = 0) {
         unsigned& data = reinterpret_cast<unsigned&>(D);
 
         asm volatile(
                 "{\n"
                 "  .reg .pred p;\n"
-                "  setp.ne.b32 p, %2, 0;\n"
-                "  mov.b32 %0, 0;\n"
-                "  @p ld.global.u32 %0, [%1];\n"
+                "  setp.ne.b32 p, %1, 0;\n"
+                "  mov.b32 %0, %2;\n"
+                "  @p ld.global.u32 %0, [%3];\n"
                 "}\n"
-                : "=r"(data)
-                : "l"(ptr), "r"((int)pred_guard), "r"(data));
+                : "=r"(data)                                       // 0
+                : "r"((int)pred_guard), "r"(pack_pad), "l"(ptr));  // 1, 2, 3
     }
 };
 
 template <typename AccessType>
 struct global_load<AccessType, 2> {
     CUTLASS_DEVICE
-    global_load(AccessType& D, void const* ptr, bool pred_guard) {
+    global_load(AccessType& D, void const* ptr, bool pred_guard,
+                uint32_t pack_pad = 0) {
         uint16_t& data = reinterpret_cast<uint16_t&>(D);
 
         asm volatile(
                 "{\n"
                 "  .reg .pred p;\n"
-                "  setp.ne.b32 p, %2, 0;\n"
-                "  mov.b16 %0, 0;\n"
-                "  @p ld.global.u16 %0, [%1];\n"
+                "  setp.ne.b32 p, %1, 0;\n"
+                "  mov.b16 %0, %2;\n"
+                "  @p ld.global.u16 %0, [%3];\n"
                 "}\n"
-                : "=h"(data)
-                : "l"(ptr), "r"((int)pred_guard), "h"(data));
+                : "=h"(data)                           // 0
+                : "r"((int)pred_guard),                // 1
+                  "h"(uint16_t(pack_pad)), "l"(ptr));  // 2, 3
     }
 };
 
 template <typename AccessType>
 struct global_load<AccessType, 1> {
     CUTLASS_DEVICE
-    global_load(AccessType& D, void const* ptr, bool pred_guard) {
-        if (pred_guard)
+    global_load(AccessType& D, void const* ptr, bool pred_guard,
+                uint32_t pack_pad = 0) {
+        if (pred_guard) {
             D = *(reinterpret_cast<AccessType const*>(ptr));
+        } else {
+            uint8_t val = pack_pad & 0xFF;
+            D = *(reinterpret_cast<AccessType const*>(&val));
+        }
     }
 };
 
@@ -233,6 +246,32 @@ struct global_store;
 // Specializations
 //
 /////////////////////////////////////////////////////////////////////////////////////////////////
+
+template <typename AccessType>
+struct global_store<AccessType, 64> {
+    CUTLASS_DEVICE
+    global_store(AccessType const& D, void* ptr, bool pred_guard) {
+        uint4 const* data = reinterpret_cast<uint4 const*>(&D);
+
+        asm volatile(
+                "{\n"
+                "  .reg .pred p;\n"
+                "  setp.ne.b32 p, %5, 0;\n"
+                "  @p st.global.v4.u32 [%0], {%1, %2, %3, %4};\n"
+                "  @p st.global.v4.u32 [%6], {%7, %8, %9, %10};\n"
+                "  @p st.global.v4.u32 [%11], {%12, %13, %14, %15};\n"
+                "  @p st.global.v4.u32 [%16], {%17, %18, %19, %20};\n"
+                "}\n"
+                :
+                : "l"(ptr), "r"(data[0].x), "r"(data[0].y), "r"(data[0].z),
+                  "r"(data[0].w), "r"((int)pred_guard),
+                  "l"(((uint8_t*)ptr) + 16), "r"(data[1].x), "r"(data[1].y),
+                  "r"(data[1].z), "r"(data[1].w), "l"(((uint8_t*)ptr) + 32),
+                  "r"(data[2].x), "r"(data[2].y), "r"(data[2].z),
+                  "r"(data[2].w), "l"(((uint8_t*)ptr) + 48), "r"(data[3].x),
+                  "r"(data[3].y), "r"(data[3].z), "r"(data[3].w));
+    }
+};
 
 template <typename AccessType>
 struct global_store<AccessType, 32> {
