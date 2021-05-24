@@ -80,6 +80,6 @@ TEST(SM75_Device_Convolution_s4_s4_NC64HW64_tensor_op_mmai8832_perf,
             2, 32, 32>;
 
     EXPECT_TRUE(test::convolution::device::TestConvolutionPerf<Convolution>(
-            100, 64, false));
+            100, 64, true));
 }
 ////////////////////////////////////////////////////////////////////////////////

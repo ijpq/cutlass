@@ -466,12 +466,13 @@ private:
 
     Index constant_offset_;
     Index strided_[ThreadMap::Iterations::kStrided];
-
-    /// Used for out-of-order visitation
-    bool is_residue_tile_;
+    uint32_t filter_hw_[ThreadMap::Iterations::kStrided];
 
     // packed padding for src zero point
     uint32_t pack_pad_;
+
+    /// Used for out-of-order visitation
+    bool is_residue_tile_;
 
 private:
    
@@ -509,12 +510,13 @@ private:
             }
         }
 
+        Index offset = 2 * constant_offset_;
         CUTLASS_PRAGMA_UNROLL
         for (int s = 0; s < ThreadMap::Iterations::kStrided; ++s) {
-            strided_[s] =
-                    params_.constant_offset_[2 *
-                                             (constant_offset_ +
-                                              s * ThreadMap::Delta::kStrided)];
+            strided_[s] = params_.constant_offset_[offset];
+            filter_hw_[s] = *(reinterpret_cast<uint32_t const*>(
+                    &params_.constant_offset_[offset + 1]));
+            offset += 2 * ThreadMap::Delta::kStrided;
         }
     }
 
@@ -593,12 +595,13 @@ public:
         } else {
             constant_offset_ += params_.constant_offset_rewind_;
         }
+        Index offset = 2 * constant_offset_;
         CUTLASS_PRAGMA_UNROLL
         for (int s = 0; s < ThreadMap::Iterations::kStrided; ++s) {
-            strided_[s] +=
-                    params_.constant_offset_[2 *
-                                             (constant_offset_ +
-                                              s * ThreadMap::Delta::kStrided)];
+            strided_[s] += params_.constant_offset_[offset];
+            filter_hw_[s] = *(reinterpret_cast<uint32_t const*>(
+                    &params_.constant_offset_[offset + 1]));
+            offset += 2 * ThreadMap::Delta::kStrided;
         }
         is_residue_tile_ = false;
         return *this;
@@ -637,31 +640,23 @@ public:
     CUTLASS_DEVICE
     void load_with_byte_offset(Fragment& frag, LongIndex byte_offset) {
         AccessType* frag_ptr = reinterpret_cast<AccessType*>(&frag);
+        int idx = 0;
         CUTLASS_PRAGMA_UNROLL
         for (int s = 0; s < ThreadMap::Iterations::kStrided; ++s) {
-            auto ptr_ = reinterpret_cast<ShortIndex const*>(
-                    params_.constant_offset_ +
-                    2 * (constant_offset_ + s * ThreadMap::Delta::kStrided) +
-                    1);
-            uint32_t spatial = *(reinterpret_cast<uint32_t const*>(ptr_));
-            int h = spatial & 0xff;
-            int w = (spatial >> 8) & 0xff;
-
+            int filter_h = filter_hw_[s] & 0xff;
+            int filter_w = (filter_hw_[s] >> 8) & 0xff;
+            int access_idx = 0;
+            bool guard_ = is_residue_tile_ ? s * ThreadMap::Delta::kStrided <
+                                                     residue_extent_
+                                           : true;
             CUTLASS_PRAGMA_UNROLL
             for (int c = 0; c < ThreadMap::Iterations::kContiguous; ++c) {
                 CUTLASS_PRAGMA_UNROLL
                 for (int v = 0; v < kAccessesPerVector; ++v) {
-                    int idx = v +
-                              kAccessesPerVector *
-                                      (c +
-                                       s * ThreadMap::Iterations::kContiguous);
-                    int access_idx = v + kAccessesPerVector * c;
-                    bool guard = (masks_[access_idx][0] & (Index(1) << h)) &&
-                                 (masks_[access_idx][1] & (Index(1) << w));
-                    if (is_residue_tile_) {
-                        guard = guard && s * ThreadMap::Delta::kStrided <
-                                                 residue_extent_;
-                    }
+                    bool guard =
+                            guard_ &&
+                            (masks_[access_idx][0] & (Index(1) << filter_h)) &&
+                            (masks_[access_idx][1] & (Index(1) << filter_w));
 
                     char const* byte_ptr =
                             reinterpret_cast<char const*>(pointer_[access_idx] +
@@ -673,6 +668,8 @@ public:
 
                     cutlass::arch::global_load<AccessType, sizeof(AccessType)>(
                             frag_ptr[idx], access_ptr, guard, pack_pad_);
+                    idx++;
+                    access_idx++;
                 }
             }
         }
@@ -693,32 +690,23 @@ public:
     CUTLASS_DEVICE
     void store_with_byte_offset(Fragment const& frag, LongIndex byte_offset) {
         AccessType* frag_ptr = reinterpret_cast<AccessType*>(&frag);
-
+        int idx = 0;
         CUTLASS_PRAGMA_UNROLL
         for (int s = 0; s < ThreadMap::Iterations::kStrided; ++s) {
-            auto ptr_ = reinterpret_cast<ShortIndex const*>(
-                    params_.constant_offset_ +
-                    2 * (constant_offset_ + s * ThreadMap::Delta::kStrided) +
-                    1);
-            uint32_t spatial = *(reinterpret_cast<uint32_t const*>(ptr_));
-            int h = spatial & 0xff;
-            int w = (spatial >> 8) & 0xff;
-
+            int filter_h = filter_hw_[s] & 0xff;
+            int filter_w = (filter_hw_[s] >> 8) & 0xff;
+            int access_idx = 0;
+            bool guard_ = is_residue_tile_ ? s * ThreadMap::Delta::kStrided <
+                                                     residue_extent_
+                                           : true;
             CUTLASS_PRAGMA_UNROLL
             for (int c = 0; c < ThreadMap::Iterations::kContiguous; ++c) {
                 CUTLASS_PRAGMA_UNROLL
                 for (int v = 0; v < kAccessesPerVector; ++v) {
-                    int idx = v +
-                              kAccessesPerVector *
-                                      (c +
-                                       s * ThreadMap::Iterations::kContiguous);
-                    int access_idx = v + kAccessesPerVector * c;
-                    bool guard = (masks_[access_idx][0] & (Index(1) << h)) &&
-                                 (masks_[access_idx][1] & (Index(1) << w));
-                    if (is_residue_tile_) {
-                        guard = guard && s * ThreadMap::Delta::kStrided <
-                                                 residue_extent_;
-                    }
+                    bool guard =
+                            guard_ &&
+                            (masks_[access_idx][0] & (Index(1) << filter_h)) &&
+                            (masks_[access_idx][1] & (Index(1) << filter_w));
 
                     char const* byte_ptr =
                             reinterpret_cast<char const*>(pointer_[access_idx] +
@@ -730,6 +718,8 @@ public:
 
                     cutlass::arch::global_store<AccessType, sizeof(AccessType)>(
                             frag_ptr[idx], access_ptr, guard);
+                    idx++;
+                    access_idx++;
                 }
             }
         }
