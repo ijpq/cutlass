@@ -605,7 +605,7 @@ struct ConvolutionOutputTileOptimalThreadMapNHWC {
                   "Divisibility");
     using ShapeVec = MatrixShape<TransposedShape::kRow,
                                  TransposedShape::kColumn / kElementsPerAccess>;
-    static_assert(!(kWarpSize % ShapeVec::kColumn));
+    static_assert(!(kWarpSize % ShapeVec::kColumn), "Divisibility");
 
     static int const kWarpArrangementColumn = ShapeVec::kColumn;
     static int const kWarpArrangementRow =
@@ -678,7 +678,7 @@ struct ConvolutionOutputTileOptimalThreadMapNHWC {
                          ? 1
                          : kWarpsRemainingForGroups / Shape::kGroup);
 
-        static_assert(kWarpsRemainingForRows == 1);
+        static_assert(kWarpsRemainingForRows == 1, "WarpRemainingForRows must be 1");
         // Warp partitions
         using WarpPartitions =
                 OutputTileShape<1, kWarpsRemainingForRows, kWarpPartitionsGroup,
