@@ -81,7 +81,7 @@ struct DefaultConvolutionConfiguration<arch::OpClassSimt, ArchTag, int8_t,
     using EpilogueOutputOp = epilogue::thread::BiasAddLinearCombinationClamp<
             ElementDst, 4, int32_t, int32_t, float>;
 
-    using Operator = arch::OpMultiplyAddSaturate;
+    using Operator = arch::OpMultiplyAdd;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
