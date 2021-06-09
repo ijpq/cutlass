@@ -40,9 +40,9 @@
 #include "../../common/cutlass_unit_test.h"
 #include "cutlass/cutlass.h"
 
-#include "cutlass/convolution/kernel/default_conv2d_nt_fprop.h"
-#include "cutlass/convolution/kernel/default_conv2d_nt_dgrad.h"
-#include "cutlass/convolution/device/implicit_gemm_nt_convolution.h"
+#include "cutlass/convolution/kernel/default_conv2d_fprop.h"
+#include "cutlass/convolution/kernel/default_conv2d_dgrad.h"
+#include "cutlass/convolution/device/implicit_gemm_precomp_convolution.h"
 
 #include "conv2d_bias_testbed_interleaved.h"
 
@@ -59,7 +59,7 @@ TEST(SM75_Device_Conv2d_Fprop_Nt_ImplicitGemm_s8ncxhwx_s8cxrskx_s8ncxhwx_simt_s3
     using ElementCompute = float;
 
     using Conv2dFpropKernel =
-            typename cutlass::conv::kernel::DefaultConv2dNtFprop<
+            typename cutlass::conv::kernel::DefaultConvolution2dFprop<
                     ElementA, cutlass::layout::TensorNCxHWx<4>, ElementB,
                     cutlass::layout::TensorCxRSKx<4>, ElementC,
                     cutlass::layout::TensorNCxHWx<4>, ElementAccumulator,
@@ -81,8 +81,8 @@ TEST(SM75_Device_Conv2d_Fprop_Nt_ImplicitGemm_s8ncxhwx_s8cxrskx_s8ncxhwx_simt_s3
                             ConvolutionFpropNCxHWxThreadblockSwizzle,
                     2, cutlass::arch::OpMultiplyAddSaturate, 4, 16>::Kernel;
 
-    using Conv2dFprop =
-            cutlass::conv::device::ImplicitGemmNtConvolution<Conv2dFpropKernel>;
+    using Conv2dFprop = cutlass::conv::device::ImplicitGemmPrecompConvolution<
+            Conv2dFpropKernel>;
 
     /// Run all unit test sizes with device-level Conv2d instance
     EXPECT_TRUE((test::conv::device::TestAllInterleavedConv2dBias<Conv2dFprop,
@@ -100,7 +100,7 @@ TEST(SM75_Device_Conv2d_Fprop_Nt_ImplicitGemm_s8ncxhwx_s8cxrskx_s8ncxhwx_tensor_
     using ElementCompute = float;
 
     using Conv2dFpropKernel =
-            typename cutlass::conv::kernel::DefaultConv2dNtFprop<
+            typename cutlass::conv::kernel::DefaultConvolution2dFprop<
                     ElementA, cutlass::layout::TensorNCxHWx<32>, ElementB,
                     cutlass::layout::TensorCxRSKx<32>, ElementC,
                     cutlass::layout::TensorNCxHWx<32>, ElementAccumulator,
@@ -126,8 +126,8 @@ TEST(SM75_Device_Conv2d_Fprop_Nt_ImplicitGemm_s8ncxhwx_s8cxrskx_s8ncxhwx_tensor_
                             ConvolutionFpropNCxHWxThreadblockSwizzle,
                     2, cutlass::arch::OpMultiplyAddSaturate, 16, 16>::Kernel;
 
-    using Conv2dFprop =
-            cutlass::conv::device::ImplicitGemmNtConvolution<Conv2dFpropKernel>;
+    using Conv2dFprop = cutlass::conv::device::ImplicitGemmPrecompConvolution<
+            Conv2dFpropKernel>;
 
     /// Run all unit test sizes with device-level Conv2d instance
     EXPECT_TRUE((test::conv::device::TestAllInterleavedConv2dBias<Conv2dFprop,
@@ -145,7 +145,7 @@ TEST(SM75_Device_Conv2d_Dgrad_Nt_ImplicitGemm_s8ncxhwx_s8kxrscx_s8ncxhwx_simt_s3
     using ElementCompute = float;
 
     using Conv2dDgradKernel =
-            typename cutlass::conv::kernel::DefaultConv2dNtDgrad<
+            typename cutlass::conv::kernel::DefaultConvolution2dDgrad<
                     ElementA, cutlass::layout::TensorNCxHWx<4>, ElementB,
                     cutlass::layout::TensorKxRSCx<4>, ElementC,
                     cutlass::layout::TensorNCxHWx<4>, ElementAccumulator,
@@ -167,8 +167,8 @@ TEST(SM75_Device_Conv2d_Dgrad_Nt_ImplicitGemm_s8ncxhwx_s8kxrscx_s8ncxhwx_simt_s3
                             ConvolutionDgradNCxHWxThreadblockSwizzle,
                     2, cutlass::arch::OpMultiplyAddSaturate, 4, 16>::Kernel;
 
-    using Conv2dDgrad =
-            cutlass::conv::device::ImplicitGemmNtConvolution<Conv2dDgradKernel>;
+    using Conv2dDgrad = cutlass::conv::device::ImplicitGemmPrecompConvolution<
+            Conv2dDgradKernel>;
 
     /// Run all unit test sizes with device-level Conv2d instance
     EXPECT_TRUE((test::conv::device::TestAllInterleavedConv2dBias<Conv2dDgrad,
@@ -186,7 +186,7 @@ TEST(SM75_Device_Conv2d_Dgrad_Nt_ImplicitGemm_s8ncxhwx_s8kxrscx_s8ncxhwx_simt_s3
     using ElementCompute = float;
 
     using Conv2dDgradKernel =
-            typename cutlass::conv::kernel::DefaultConv2dNtDgrad<
+            typename cutlass::conv::kernel::DefaultConvolution2dDgrad<
                     ElementA, cutlass::layout::TensorNCxHWx<4>, ElementB,
                     cutlass::layout::TensorKxRSCx<4>, ElementC,
                     cutlass::layout::TensorNCxHWx<4>, ElementAccumulator,
@@ -208,8 +208,8 @@ TEST(SM75_Device_Conv2d_Dgrad_Nt_ImplicitGemm_s8ncxhwx_s8kxrscx_s8ncxhwx_simt_s3
                             ConvolutionDgradNCxHWxThreadblockSwizzle,
                     2, cutlass::arch::OpMultiplyAddSaturate, 4, 4>::Kernel;
 
-    using Conv2dDgrad =
-            cutlass::conv::device::ImplicitGemmNtConvolution<Conv2dDgradKernel>;
+    using Conv2dDgrad = cutlass::conv::device::ImplicitGemmPrecompConvolution<
+            Conv2dDgradKernel>;
 
     /// Run all unit test sizes with device-level Conv2d instance
     EXPECT_TRUE((test::conv::device::TestAllInterleavedConv2dBias<Conv2dDgrad,
@@ -227,7 +227,7 @@ TEST(SM75_Device_Conv2d_Dgrad_Nt_ImplicitGemm_s8ncxhwx_s8kxrscx_s8ncxhwx_tensor_
     using ElementCompute = float;
 
     using Conv2dDgradKernel =
-            typename cutlass::conv::kernel::DefaultConv2dNtDgrad<
+            typename cutlass::conv::kernel::DefaultConvolution2dDgrad<
                     ElementA, cutlass::layout::TensorNCxHWx<32>, ElementB,
                     cutlass::layout::TensorKxRSCx<32>, ElementC,
                     cutlass::layout::TensorNCxHWx<32>, ElementAccumulator,
@@ -253,8 +253,8 @@ TEST(SM75_Device_Conv2d_Dgrad_Nt_ImplicitGemm_s8ncxhwx_s8kxrscx_s8ncxhwx_tensor_
                             ConvolutionDgradNCxHWxThreadblockSwizzle,
                     2, cutlass::arch::OpMultiplyAddSaturate, 16, 16>::Kernel;
 
-    using Conv2dDgrad =
-            cutlass::conv::device::ImplicitGemmNtConvolution<Conv2dDgradKernel>;
+    using Conv2dDgrad = cutlass::conv::device::ImplicitGemmPrecompConvolution<
+            Conv2dDgradKernel>;
 
     /// Run all unit test sizes with device-level Conv2d instance
     EXPECT_TRUE((test::conv::device::TestAllInterleavedConv2dBias<Conv2dDgrad,
@@ -272,7 +272,7 @@ TEST(SM75_Device_Conv2d_Dgrad_Nt_ImplicitGemm_s8ncxhwx_s8kxrscx_s8ncxhwx_tensor_
     using ElementCompute = float;
 
     using Conv2dDgradKernel =
-            typename cutlass::conv::kernel::DefaultConv2dNtDgrad<
+            typename cutlass::conv::kernel::DefaultConvolution2dDgrad<
                     ElementA, cutlass::layout::TensorNCxHWx<32>, ElementB,
                     cutlass::layout::TensorKxRSCx<32>, ElementC,
                     cutlass::layout::TensorNCxHWx<32>, ElementAccumulator,
@@ -298,8 +298,8 @@ TEST(SM75_Device_Conv2d_Dgrad_Nt_ImplicitGemm_s8ncxhwx_s8kxrscx_s8ncxhwx_tensor_
                             ConvolutionDgradNCxHWxThreadblockSwizzle,
                     2, cutlass::arch::OpMultiplyAddSaturate, 16, 16>::Kernel;
 
-    using Conv2dDgrad =
-            cutlass::conv::device::ImplicitGemmNtConvolution<Conv2dDgradKernel>;
+    using Conv2dDgrad = cutlass::conv::device::ImplicitGemmPrecompConvolution<
+            Conv2dDgradKernel>;
 
     /// Run all unit test sizes with device-level Conv2d instance
     EXPECT_TRUE((test::conv::device::TestAllInterleavedConv2dBias<Conv2dDgrad,

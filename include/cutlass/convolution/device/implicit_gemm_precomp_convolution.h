@@ -25,7 +25,7 @@
  *
  **************************************************************************************************/
 /**
- * \file include/cutlass/convolution/device/implicit_gemm_nt_convolution.h
+ * \file include/cutlass/convolution/device/implicit_gemm_precomp_convolution.h
  *
  * Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
  *
@@ -55,7 +55,7 @@ namespace device {
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
 template <typename ImplicitGemmKernel_>
-class ImplicitGemmNtConvolution {
+class ImplicitGemmPrecompConvolution {
 public:
     using ImplicitGemmKernel = ImplicitGemmKernel_;
 
@@ -99,7 +99,7 @@ private:
 
 public:
     /// Constructs Implicit GEMM
-    ImplicitGemmNtConvolution() {}
+    ImplicitGemmPrecompConvolution() {}
 
     /// Determines whether the Implicit GEMM can execute the given problem.
     static Status can_implement(Arguments const& args) {

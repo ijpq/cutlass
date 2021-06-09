@@ -37,7 +37,7 @@ WAY OUT OF THE USE
  *
  **************************************************************************************************/
 /**
- * \file include/cutlass/convolution/kernel/default_conv2d_nt_fprop.h
+ * \file include/cutlass/convolution/kernel/default_conv2d_fprop.h
  *
  * Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
  *
@@ -63,9 +63,11 @@ WAY OUT OF THE USE
 
 #include "cutlass/convolution/kernel/implicit_gemm_nt_convolution.h"
 #include "cutlass/convolution/kernel/implicit_gemm_nt_precomp_convolution.h"
+#include "cutlass/convolution/kernel/implicit_gemm_tn_precomp_convolution.h"
 
 #include "cutlass/convolution/threadblock/conv2d_tile_iterator_nt.h"
 #include "cutlass/convolution/threadblock/conv2d_tile_iterator_nt_src_fprop_precomp.h"
+#include "cutlass/convolution/threadblock/conv2d_tile_iterator_tn_fprop_nhwc_precomp.h"
 
 #include "cutlass/convolution/threadblock/implicit_mma_core.h"
 #include "cutlass/convolution/threadblock/implicit_mma_core_simt.h"
@@ -75,6 +77,7 @@ WAY OUT OF THE USE
 
 #include "cutlass/epilogue/threadblock/convolution_epilogue_simt.h"
 #include "cutlass/epilogue/threadblock/convolution_epilogue_tensor_op.h"
+#include "cutlass/epilogue/threadblock/default_epilogue_tensor_op.h"
 
 #include "cutlass/epilogue/thread/bias_add_linear_combination_relu_clamp.h"
 #include "cutlass/epilogue/thread/bias_add_linear_combination_hswish_clamp.h"
@@ -124,8 +127,10 @@ template <typename ElementSrc,
           /// Access granularity of Filter Tensor in units of elements
           int AlignmentFilter,
           /// whether use special optimization for conv 1x1
-          bool NeedLoadFromConstMem = true>
-struct DefaultConv2dNtFprop;
+          bool NeedLoadFromConstMem = true,
+          /// Implicit Gemm Mode
+          ImplicitGemmMode GemmMode = ImplicitGemmMode::GEMM_NT>
+struct DefaultConvolution2dFprop;
 
 /// Partial specialization for SIMT DP4A
 template <
@@ -153,7 +158,7 @@ template <
         int kAlignmentSrc,
         /// Access granularity of Filter Tensor in units of elements
         int kAlignmentFilter>
-struct DefaultConv2dNtFprop<
+struct DefaultConvolution2dFprop<
         int8_t, layout::TensorCxRSKx<4>, int8_t, layout::TensorCxRSKx<4>,
         ElementDst, LayoutDst, ElementAccumulator, arch::OpClassSimt, ArchTag,
         ThreadblockShape, WarpShape, gemm::GemmShape<1, 1, 4>, EpilogueOutputOp,
@@ -252,7 +257,7 @@ template <typename LayoutDst,
           int kAlignmentFilter,
           /// whether use special optimization for conv 1x1
           bool NeedLoadFromConstMem>
-struct DefaultConv2dNtFprop<
+struct DefaultConvolution2dFprop<
         int8_t, layout::TensorNCxHWx<4>, int8_t, layout::TensorCxRSKx<4>,
         ElementDst, LayoutDst, ElementAccumulator, arch::OpClassSimt, ArchTag,
         ThreadblockShape, WarpShape, gemm::GemmShape<1, 1, 4>, EpilogueOutputOp,
@@ -363,7 +368,7 @@ template <  /// Layout type for Dst and Z Tensor operand
         int kAlignmentSrc,
         /// Access granularity of Filter Tensor in units of elements
         int kAlignmentFilter>
-struct DefaultConv2dNtFprop<
+struct DefaultConvolution2dFprop<
         int8_t, layout::TensorCxRSKx<4>, int8_t, layout::TensorCxRSKx<16>,
         ElementDst, LayoutDst, ElementAccumulator, arch::OpClassTensorOp,
         arch::Sm75, ThreadblockShape, WarpShape, InstructionShape,
@@ -450,7 +455,7 @@ template <  /// Layout type for Dst and Z Tensor operand
         int kAlignmentSrc,
         /// Access granularity of Filter Tensor in units of elements
         int kAlignmentFilter, bool NeedLoadFromConstMem>
-struct DefaultConv2dNtFprop<
+struct DefaultConvolution2dFprop<
         int8_t, layout::TensorNCxHWx<Interleaved>, int8_t,
         layout::TensorCxRSKx<Interleaved>, ElementDst, LayoutDst_,
         ElementAccumulator, arch::OpClassTensorOp, arch::Sm75, ThreadblockShape,
@@ -554,7 +559,7 @@ template <
         int kAlignmentSrc,
         /// Access granularity of Filter Tensor in units of elements
         int kAlignmentFilter, bool NeedLoadFromConstMem>
-struct DefaultConv2dNtFprop<
+struct DefaultConvolution2dFprop<
         integer_subbyte<4, Signed>, layout::TensorNCxHWx<Interleaved>, int4b_t,
         layout::TensorCxRSKx<Interleaved>, ElementDst,
         layout::TensorNCxHWx<Interleaved>, ElementAccumulator,
@@ -656,7 +661,7 @@ template <  /// Element type for Dst and Z Tensor operands
         int kAlignmentSrc,
         /// Access granularity of Filter Tensor in units of elements
         int kAlignmentFilter, bool NeedLoadFromConstMem>
-struct DefaultConv2dNtFprop<
+struct DefaultConvolution2dFprop<
         int8_t, layout::TensorNCxHWx<Interleaved>, int8_t,
         layout::TensorCxRSKx<Interleaved>, ElementDst, layout::TensorNCxHWx<4>,
         ElementAccumulator, arch::OpClassTensorOp, arch::Sm75, ThreadblockShape,
@@ -727,6 +732,95 @@ struct DefaultConv2dNtFprop<
 
     /// Define the kernel-level conv operator.
     using Kernel = cutlass::conv::kernel::ImplicitGemmNtPrecompConvolution<
+            Mma, Epilogue, ThreadblockSwizzle, conv::Operator::kFprop>;
+};
+
+template <
+        /// ElementSrc is int4b_t or uint4b_t
+        bool Signed,
+        /// Element type for Dst and Z Tensor operands
+        typename ElementDst,
+        /// Element type for internal accumulation
+        typename ElementAccumulator,
+        /// Threadblock-level tile size (concept: gemm::GemmShape)
+        typename ThreadblockShape,
+        /// Warp-level tile size (concept: gemm::GemmShape)
+        typename WarpShape,
+        /// Instruction-level tile size (concept: gemm::GemmShape)
+        typename InstructionShape,
+        /// Epilogue output operator
+        typename EpilogueOutputOp,
+        /// Threadblock-level swizzling operator
+        typename ThreadblockSwizzle,
+        /// Operation performed by GEMM
+        typename MathOperatorTag,
+        /// Access granularity of Src Tensor in units of elements
+        int kAlignmentSrc,
+        /// Access granularity of Filter Tensor in units of elements
+        int kAlignmentFilter, bool NeedLoadFromConstMem>
+struct DefaultConvolution2dFprop<
+        integer_subbyte<4, Signed>, layout::TensorNHWC, int4b_t,
+        layout::TensorNCxHWx<kAlignmentFilter>, ElementDst, layout::TensorNHWC,
+        ElementAccumulator, arch::OpClassTensorOp, arch::Sm75, ThreadblockShape,
+        WarpShape, InstructionShape, EpilogueOutputOp, ThreadblockSwizzle, 2,
+        MathOperatorTag, kAlignmentSrc, kAlignmentFilter, NeedLoadFromConstMem,
+        ImplicitGemmMode::GEMM_TN> {
+    using ElementSrc = integer_subbyte<4, Signed>;
+    using ElementFilter = int4b_t;
+    using LayoutSrc = layout::TensorNHWC;
+    using LayoutFilter = layout::TensorNCxHWx<kAlignmentFilter>;
+    using LayoutDst = layout::TensorNHWC;
+    using OperatorClass = arch::OpClassTensorOp;
+
+    static_assert(kAlignmentSrc == kAlignmentFilter,
+                  "kAlignmentSrc and kAlignmentFilter must be the same");
+
+    static_assert(kAlignmentSrc % 8 == 0,
+                  "Alignment must match thread data map's vector length");
+
+    static_assert(kAlignmentFilter % 8 == 0,
+                  "Alignment must match thread data map's vector length");
+
+    // Define the MmaCore components
+    using MmaCore = typename cutlass::conv::threadblock::DefaultMmaCore<
+            ThreadblockShape, WarpShape, InstructionShape, ElementSrc,
+            LayoutSrc, kAlignmentSrc, ElementFilter, LayoutFilter,
+            kAlignmentFilter, ElementAccumulator, LayoutDst, OperatorClass, 2,
+            MathOperatorTag>;
+
+    // Define iterators over tiles from the Src Tensor operand
+    using IteratorSrc =
+            cutlass::conv::threadblock::Conv2dTileSrcIteratorFpropPrecompNHWC<
+                    cutlass::MatrixShape<ThreadblockShape::kM,
+                                         ThreadblockShape::kK>,
+                    ElementSrc, LayoutSrc,
+                    typename MmaCore::IteratorThreadMapSrc, kAlignmentSrc,
+                    NeedLoadFromConstMem>;
+
+    // Define iterators over tiles from the Filter Tensor operand
+    using IteratorFilter =
+            cutlass::conv::threadblock::Conv2dTileFilterIteratorFpropKCxRSx<
+                    cutlass::MatrixShape<ThreadblockShape::kK,
+                                         ThreadblockShape::kN>,
+                    ElementFilter, LayoutFilter,
+                    typename MmaCore::IteratorThreadMapFilter,
+                    kAlignmentFilter>;
+
+    // Define the threadblock-scoped pipelined matrix multiply
+    using Mma = typename cutlass::conv::threadblock::MmaTnPrecompPipelined<
+            typename MmaCore::Shape, IteratorSrc,
+            typename MmaCore::SmemIteratorSrc, IteratorFilter,
+            typename MmaCore::SmemIteratorFilter, ElementAccumulator, LayoutDst,
+            typename MmaCore::MmaPolicy>;
+
+    using Epilogue = typename cutlass::epilogue::threadblock::
+            ConvolutionEpilogueTensorOp<ThreadblockShape, LayoutDst, LayoutDst,
+                                        typename Mma::Operator,
+                                        EpilogueOutputOp,
+                                        EpilogueOutputOp::kCount>::Epilogue;
+
+    /// Define the kernel-level conv operator.
+    using Kernel = cutlass::conv::kernel::ImplicitGemmTnPrecompConvolution<
             Mma, Epilogue, ThreadblockSwizzle, conv::Operator::kFprop>;
 };
 

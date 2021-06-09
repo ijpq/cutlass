@@ -62,7 +62,7 @@
 #include "cutlass/layout/tensor.h"
 #include "cutlass/layout/matrix.h"
 #include "cutlass/conv/conv2d_problem_size.h"
-#include "cutlass/convolution/threadblock/conv2d_tile_map.h"
+#include "cutlass/convolution/threadblock/conv2d_tile_params.h"
 #include "cutlass/transform/threadblock/predicated_tile_iterator.h"
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -73,9 +73,10 @@ namespace threadblock {
 
 namespace detail {
 template <typename Shape_, int Interleaved, typename Element>
-CUTLASS_HOST_DEVICE void compute_offset_fprop(int* constant_offset_, int fh_,
-                                              int fw_, int hi_, int wi_,
-                                              int residue_offset_) {
+CUTLASS_HOST_DEVICE void compute_offset_fprop_ncxhwx(int* constant_offset_,
+                                                     int fh_, int fw_, int hi_,
+                                                     int wi_,
+                                                     int residue_offset_) {
     // hardcoded typedef
     using Shape = Shape_;
     using ShortIndex = int8_t;
@@ -161,36 +162,6 @@ CUTLASS_HOST_DEVICE void compute_offset_fprop(int* constant_offset_, int fh_,
 
 ////////////////////////////////////////////////////////////////////////////////
 
-struct ExtraParamZeroPoint {
-    uint8_t src_zero_point;
-
-    CUTLASS_HOST_DEVICE
-    ExtraParamZeroPoint() : src_zero_point(0) {}
-
-    CUTLASS_HOST_DEVICE
-    ExtraParamZeroPoint(uint8_t src_zero_point_)
-            : src_zero_point(src_zero_point_) {}
-};
-
-namespace detail {
-template <typename Element, typename ExtraParam>
-CUTLASS_HOST_DEVICE uint32_t prepare_pack_pad(const ExtraParam& params) {
-    return 0;
-}
-
-template <>
-CUTLASS_HOST_DEVICE uint32_t prepare_pack_pad<uint4b_t, ExtraParamZeroPoint>(
-        const ExtraParamZeroPoint& params) {
-    uint32_t ret = 0;
-    for (size_t i = 0; i < 8; i++) {
-        ret |= params.src_zero_point << (4 * i);
-    }
-    return ret;
-}
-}  // namespace detail
-
-////////////////////////////////////////////////////////////////////////////////
-
 template <typename Shape, typename Element, typename Layout, typename ThreadMap,
           typename TileMap, bool NeedLoadFromConstMem = true>
 class FpropPrecompParams;
@@ -222,19 +193,15 @@ public:
     /// Logical tensor coord
     using LogicalCoord = typename LogicalLayout::TensorCoord;
 
-    /// Hardcoded maximum filter sizes
-    static int const kMaxFilterPixels = 7 * 7;
     /// Element size in Index
     static int const kElementSize =
             (cutlass::sizeof_bits<Index>::value +
              4 * cutlass::sizeof_bits<ShortIndex>::value) /
             cutlass::sizeof_bits<Index>::value;
-    static int const kPrecomputedOffsetBufferSize =
-            (2 + kMaxFilterPixels) * kElementSize * Shape::kStrided;
-
-    static_assert(Shape::kStrided <= 8,
-                  "Shape::kStrided is larger than 8, param may exceed "
-                  "maximum kernel parameter buffer size");
+    // less than 3.5K
+    static int const kPrecomputedOffsetBufferSize = 848;
+    static int const kMaxFilterPixels =
+            kPrecomputedOffsetBufferSize / (kElementSize * Shape::kStrided) - 2;
 
     /// Used for converting tensor coordinates into pointer offset
     Layout layout_;
@@ -246,10 +213,12 @@ public:
     Index hi_, wi_, n_;
     Index fh_, fw_;
     Index residue_offset_;
+    // packed padding for src zero point
+    uint32_t pack_pad_;
+
     Index constant_offset_max_;
     Index constant_offset_rewind_;
     Index constant_offset_[kPrecomputedOffsetBufferSize];
-    ExtraParam extra_param_;
 
     CUTLASS_HOST_DEVICE
     FpropPrecompParams() : layout_(Layout()), tile_map_(TileMap()) {}
@@ -268,8 +237,7 @@ public:
               pad_w_(problem_size.pad_w),
               fh_(problem_size.R),
               fw_(problem_size.S),
-              n_(problem_size.N),
-              extra_param_(extra_param) {
+              n_(problem_size.N) {
         hi_ = problem_size.H;
         wi_ = problem_size.W;
         Index conv_iterations =
@@ -279,13 +247,15 @@ public:
         if (!residue_offset_) {
             residue_offset_ = Shape::kStrided;
         }
-        detail::compute_offset_fprop<Shape, kInterleaved, Element>(
+        detail::compute_offset_fprop_ncxhwx<Shape, kInterleaved, Element>(
                 constant_offset_, problem_size.R, problem_size.S, hi_, wi_,
                 residue_offset_);
         constant_offset_max_ =
                 (1 + problem_size.R * problem_size.S) * Shape::kStrided;
         constant_offset_rewind_ =
                 Shape::kStrided * (1 - problem_size.R * problem_size.S);
+        // Host Init
+        pack_pad_ = detail::prepare_pack_pad<Element, ExtraParam>(extra_param);
     }
 
     CUTLASS_DEVICE
@@ -308,7 +278,9 @@ public:
     using Layout = layout::TensorNCxHWx<kInterleaved>;
     using ThreadMap = ThreadMap_;
     using TileMap = TileMap_;
-    using ExtraParam = platform::none_type;
+    using ExtraParam = typename platform::conditional<
+            platform::is_same<Element, uint4b_t>::value, ExtraParamZeroPoint,
+            platform::none_type>::type;
 
     using ShortIndex = int8_t;
     using Index = typename Layout::Index;
@@ -335,6 +307,7 @@ public:
     TileMap tile_map_;
     Index stride_h_, stride_w_, pad_h_, pad_w_;
     Index hi_, wi_, n_;
+    uint32_t pack_pad_;
 
     CUTLASS_HOST_DEVICE
     FpropPrecompParams() : layout_(Layout()), tile_map_(TileMap()) {}
@@ -365,6 +338,8 @@ public:
         inc_next_ = Shape::kStrided * LongIndex(stride) *
                             sizeof_bits<Element>::value / 8 -
                     inc_iterations_;
+
+        pack_pad_ = detail::prepare_pack_pad<Element, ExtraParam>(extra_param);
     }
 
     CUTLASS_DEVICE
@@ -468,9 +443,6 @@ private:
     Index strided_[ThreadMap::Iterations::kStrided];
     uint32_t filter_hw_[ThreadMap::Iterations::kStrided];
 
-    // packed padding for src zero point
-    uint32_t pack_pad_;
-
     /// Used for out-of-order visitation
     bool is_residue_tile_;
 
@@ -555,9 +527,6 @@ public:
         initialize_predicate_and_pointers_(pointer, thread_offset.column());
 
         residue_extent_ = residue_extent_ - thread_offset.row();
-
-        pack_pad_ = detail::prepare_pack_pad<Element, ExtraParam>(
-                params.extra_param_);
     }
 
     /// Construct a Conv2dTileSrcIteratorFpropPrecomp with zero threadblock
@@ -667,7 +636,8 @@ public:
                             reinterpret_cast<AccessType const*>(byte_ptr);
 
                     cutlass::arch::global_load<AccessType, sizeof(AccessType)>(
-                            frag_ptr[idx], access_ptr, guard, pack_pad_);
+                            frag_ptr[idx], access_ptr, guard,
+                            params_.pack_pad_);
                     idx++;
                     access_idx++;
                 }
@@ -728,6 +698,14 @@ public:
     /// Store a fragment to memory
     CUTLASS_DEVICE
     void store(Fragment const& frag) { store_with_pointer_offset(frag, 0); }
+
+    static Status can_implement(Conv2dProblemSize& problem_size) {
+        if (problem_size.R * problem_size.S > Params::kMaxFilterPixels) {
+            return Status::kErrorInvalidProblem;
+        }
+
+        return Status::kSuccess;
+    }
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1047,7 +1025,8 @@ public:
                             reinterpret_cast<AccessType const*>(byte_ptr);
 
                     cutlass::arch::global_load<AccessType, sizeof(AccessType)>(
-                            frag_ptr[idx], access_ptr, guard);
+                            frag_ptr[idx], access_ptr, guard,
+                            params_.pack_pad_);
                 }
             }
             if (s < ThreadMap::Iterations::kStrided - 1) {
@@ -1122,6 +1101,10 @@ public:
     /// Store a fragment to memory
     CUTLASS_DEVICE
     void store(Fragment const& frag) { store_with_pointer_offset(frag, 0); }
+
+    static Status can_implement(Conv2dProblemSize& problem_size) {
+        return Status::kSuccess;
+    }
 };
 
 ////////////////////////////////////////////////////////////////////////////////

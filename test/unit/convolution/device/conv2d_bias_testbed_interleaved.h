@@ -43,7 +43,7 @@
 #include "../../common/cutlass_unit_test.h"
 #include "cutlass/cutlass.h"
 
-#include "cutlass/convolution/device/implicit_gemm_nt_convolution.h"
+#include "cutlass/convolution/device/implicit_gemm_precomp_convolution.h"
 
 #include "../../conv/device/conv2d_problems.h"
 

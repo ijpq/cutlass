@@ -67,6 +67,7 @@
 #include "cutlass/epilogue/threadblock/epilogue.h"
 #include "cutlass/epilogue/threadblock/interleaved_shared_load_iterator_tensor_op.h"
 #include "cutlass/epilogue/threadblock/tensor_predicated_tile_iterator_tensor_op.h"
+#include "cutlass/epilogue/threadblock/default_epilogue_tensor_op.h"
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -87,6 +88,71 @@ template <typename Shape_,            ///< Threadblock-level tile size (concept:
 struct ConvolutionEpilogueTensorOp;
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
+
+template <typename Shape_, typename WarpMmaTensorOp_, typename OutputOp_,
+          int ElementsPerAccess>
+struct ConvolutionEpilogueTensorOp<Shape_, layout::TensorNHWC,
+                                   layout::TensorNHWC, WarpMmaTensorOp_,
+                                   OutputOp_, ElementsPerAccess> {
+    using Shape = Shape_;
+    using WarpMmaTensorOp = WarpMmaTensorOp_;
+    static const int kPartitionsK = Shape::kK / WarpMmaTensorOp::Shape::kK;
+    using OutputOp = OutputOp_;
+    static int const kElementsPerAccess = ElementsPerAccess;
+    using ElementOutput = typename OutputOp::ElementOutput;
+    using LayoutDst = layout::TensorNHWC;
+    using ElementBias = typename OutputOp::ElementBias;
+    using LayoutBias = layout::TensorNHWC;
+    using ElementAccumulator = typename WarpMmaTensorOp::ElementC;
+
+    //
+    // Thread map
+    //
+
+    using OutputTileThreadMap =
+            typename cutlass::epilogue::threadblock::DefaultThreadMapTensorOp<
+                    Shape, typename WarpMmaTensorOp::Shape, kPartitionsK,
+                    ElementOutput, kElementsPerAccess>::Type;
+
+    using OutputTileIterator =
+            cutlass::epilogue::threadblock::PredicatedTileIterator<
+                    OutputTileThreadMap, ElementOutput>;
+
+    using AccumulatorFragmentIterator =
+            cutlass::epilogue::warp::FragmentIteratorTensorOp<
+                    typename WarpMmaTensorOp::Shape,
+                    typename WarpMmaTensorOp::Policy::Operator::Shape,
+                    typename WarpMmaTensorOp::Policy::Operator::ElementC,
+                    typename WarpMmaTensorOp::Policy::Operator::FragmentC,
+                    typename WarpMmaTensorOp::LayoutC>;
+
+    /// Support several implementations depending on structure of epilogue
+    using DefaultIterators = detail::DefaultIteratorsTensorOp<
+            ElementOutput, ElementAccumulator, kElementsPerAccess, Shape,
+            typename WarpMmaTensorOp::Shape,
+            typename WarpMmaTensorOp::Policy::Operator::Shape,
+            typename OutputTileThreadMap::CompactedThreadMap>;
+
+    using WarpTileIterator = typename DefaultIterators::WarpTileIterator;
+    using SharedLoadIterator = typename DefaultIterators::SharedLoadIterator;
+
+    /// Hard-coded padding elements added
+    using Padding = cutlass::MatrixShape<
+            0, 64 / sizeof_bits<ElementAccumulator>::value * 4>;
+
+    using BiasTileIterator = cutlass::epilogue::threadblock::
+            PerChannelBiasPredicatedTileIteratorTensorOp<
+                    OutputTileThreadMap, LayoutBias, ElementBias,
+                    OutputTileThreadMap::kElementsPerAccess, false>;
+
+    //
+    // Define the epilogue
+    //
+    using Epilogue = cutlass::epilogue::threadblock::ConvolutionEpilogue<
+            Shape, LayoutDst, kPartitionsK, WarpMmaTensorOp, OutputTileIterator,
+            AccumulatorFragmentIterator, WarpTileIterator, SharedLoadIterator,
+            BiasTileIterator, OutputOp, Padding>;
+};
 
 template <typename Shape_, typename WarpMmaTensorOp_, typename OutputOp_,
           int Interleaved, int ElementsPerAccess>

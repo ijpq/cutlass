@@ -45,8 +45,8 @@
 #include "cutlass/convolution/threadblock/threadblock_swizzle.h"
 
 #include "cutlass/convolution/device/default_convolution_configuration.h"
-#include "cutlass/convolution/kernel/default_conv2d_nt_dgrad.h"
-#include "cutlass/convolution/kernel/default_conv2d_nt_fprop.h"
+#include "cutlass/convolution/kernel/default_conv2d_dgrad.h"
+#include "cutlass/convolution/kernel/default_conv2d_fprop.h"
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -119,7 +119,10 @@ template <
         /// Operation performed by Convolution
         typename Operator_ = typename DefaultConvolutionConfiguration<
                 OperatorClass_, ArchTag_, ElementSrc_, ElementFilter_,
-                ElementDst_, ElementAccumulator_>::Operator>
+                ElementDst_, ElementAccumulator_>::Operator,
+        /// Implicit Gemm Mode
+        cutlass::conv::ImplicitGemmMode GemmMode =
+                cutlass::conv::ImplicitGemmMode::GEMM_NT>
 class Convolution {
 public:
     using ElementSrc = ElementSrc_;
@@ -145,15 +148,16 @@ public:
     static int const kAlignmentFilter = AlignmentFilter;
     static int const kAlignmentDst = EpilogueOutputOp::kCount;
     static bool const kNeedLoadFromConstMem = NeedLoadFromConstMem;
+    static cutlass::conv::ImplicitGemmMode const kGemmMode = GemmMode;
 
     using ConvolutionKernel =
-            typename cutlass::conv::kernel::DefaultConv2dNtFprop<
+            typename cutlass::conv::kernel::DefaultConvolution2dFprop<
                     ElementSrc, LayoutSrc, ElementFilter, LayoutFilter,
                     ElementDst, LayoutDst, ElementAccumulator, OperatorClass,
                     ArchTag, ThreadblockShape, WarpShape, InstructionShape,
                     EpilogueOutputOp, ThreadblockSwizzle, kStages, Operator,
-                    kAlignmentSrc, kAlignmentFilter,
-                    kNeedLoadFromConstMem>::Kernel;
+                    kAlignmentSrc, kAlignmentFilter, kNeedLoadFromConstMem,
+                    kGemmMode>::Kernel;
 
     using TensorRefSrc = typename ConvolutionKernel::TensorRefSrc;
     using TensorRefFilter = typename ConvolutionKernel::TensorRefFilter;
@@ -347,7 +351,10 @@ template <
         /// Operation performed by Convolution
         typename Operator_ = typename DefaultConvolutionConfiguration<
                 OperatorClass_, ArchTag_, ElementSrc_, ElementFilter_,
-                ElementDst_, ElementAccumulator_>::Operator>
+                ElementDst_, ElementAccumulator_>::Operator, 
+                /// Implicit Gemm Mode
+        cutlass::conv::ImplicitGemmMode GemmMode =
+                cutlass::conv::ImplicitGemmMode::GEMM_NT>
 class Deconvolution {
 public:
     using ElementSrc = ElementSrc_;
@@ -373,15 +380,16 @@ public:
     static int const kAlignmentFilter = AlignmentFilter;
     static int const kAlignmentDst = EpilogueOutputOp::kCount;
     static bool const kNeedLoadFromConstMem = NeedLoadFromConstMem;
+    static cutlass::conv::ImplicitGemmMode const kGemmMode = GemmMode;
 
     using ConvolutionKernel =
-            typename cutlass::conv::kernel::DefaultConv2dNtDgrad<
+            typename cutlass::conv::kernel::DefaultConvolution2dDgrad<
                     ElementSrc, LayoutSrc, ElementFilter, LayoutFilter,
                     ElementDst, LayoutDst, ElementAccumulator, OperatorClass,
                     ArchTag, ThreadblockShape, WarpShape, InstructionShape,
                     EpilogueOutputOp, ThreadblockSwizzle, kStages, Operator,
-                    kAlignmentSrc, kAlignmentFilter,
-                    kNeedLoadFromConstMem>::Kernel;
+                    kAlignmentSrc, kAlignmentFilter, kNeedLoadFromConstMem,
+                    kGemmMode>::Kernel;
 
     using TensorRefSrc = typename ConvolutionKernel::TensorRefSrc;
     using TensorRefFilter = typename ConvolutionKernel::TensorRefFilter;

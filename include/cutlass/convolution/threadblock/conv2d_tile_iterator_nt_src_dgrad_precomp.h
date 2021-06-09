@@ -62,7 +62,7 @@
 #include "cutlass/layout/tensor.h"
 #include "cutlass/layout/matrix.h"
 #include "cutlass/conv/conv2d_problem_size.h"
-#include "cutlass/convolution/threadblock/conv2d_tile_map.h"
+#include "cutlass/convolution/threadblock/conv2d_tile_params.h"
 #include "cutlass/transform/threadblock/predicated_tile_iterator.h"
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -169,19 +169,15 @@ public:
     /// Logical tensor coord
     using LogicalCoord = typename LogicalLayout::TensorCoord;
 
-    /// Hardcoded maximum filter sizes
-    static int const kMaxFilterPixels = 7 * 7;
     /// Element size in Index
     static int const kElementSize =
             (cutlass::sizeof_bits<Index>::value +
              4 * cutlass::sizeof_bits<ShortIndex>::value) /
             cutlass::sizeof_bits<Index>::value;
-    static int const kPrecomputedOffsetBufferSize =
-            (2 + kMaxFilterPixels) * kElementSize * Shape::kStrided;
-
-    static_assert(Shape::kStrided <= 8,
-                  "Shape::kStrided is larger than 8, param may exceed "
-                  "maximum kernel parameter buffer size");
+    // less than 3.2K
+    static int const kPrecomputedOffsetBufferSize = 848;
+    static int const kMaxFilterPixels =
+            kPrecomputedOffsetBufferSize / (kElementSize * Shape::kStrided) - 2;
 
     /// Used for converting tensor coordinates into pointer offset
     Layout layout_;
@@ -711,6 +707,14 @@ public:
     /// Store a fragment to memory
     CUTLASS_DEVICE
     void store(Fragment const& frag) { store_with_pointer_offset(frag, 0); }
+
+    static Status can_implement(Conv2dProblemSize& problem_size) {
+        if (problem_size.R * problem_size.S > Params::kMaxFilterPixels) {
+            return Status::kErrorInvalidProblem;
+        }
+
+        return Status::kSuccess;
+    }
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1108,6 +1112,10 @@ public:
     /// Store a fragment to memory
     CUTLASS_DEVICE
     void store(Fragment const& frag) { store_with_pointer_offset(frag, 0); }
+
+    static Status can_implement(Conv2dProblemSize& problem_size) {
+        return Status::kSuccess;
+    }
 };
 
 ////////////////////////////////////////////////////////////////////////////////

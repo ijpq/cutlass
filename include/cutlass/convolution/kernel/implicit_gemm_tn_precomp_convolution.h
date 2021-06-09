@@ -26,7 +26,7 @@
  **************************************************************************************************/
 /**
  * \file
- * include/cutlass/convolution/kernel/implicit_gemm_nt_precomp_convolution.h
+ * include/cutlass/convolution/kernel/implicit_gemm_tn_precomp_convolution.h
  *
  * Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
  *
@@ -54,6 +54,7 @@
 #include "cutlass/conv/convolution.h"
 #include "cutlass/conv/conv2d_problem_size.h"
 #include "cutlass/conv/conv3d_problem_size.h"
+#include "cutlass/epilogue/threadblock/output_iterator_parameter.h"
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -72,7 +73,7 @@ template <typename Mma_,  ///! Threadblock-scoped matrix multiply-accumulate
                   Conv2dProblemSize  ///! Convolutional operator on 2D or 3D
                                      /// problem
           >
-struct ImplicitGemmNtPrecompConvolution {
+struct ImplicitGemmTnPrecompConvolution {
     using Mma = Mma_;
     using Epilogue = Epilogue_;
     using EpilogueOutputOp = typename Epilogue::OutputOp;
@@ -115,6 +116,11 @@ struct ImplicitGemmNtPrecompConvolution {
     /// Warp count (concept: GemmShape)
     using WarpCount = typename Mma::WarpCount;
     static int const kThreadCount = 32 * WarpCount::kCount;
+
+    using ConvOutputIteratorParameter =
+            epilogue::threadblock::ConvOutputIteratorParameter<
+                    LayoutDst, typename Epilogue::OutputTileIterator::Layout,
+                    TensorRefDst, ConvOperator, ConvProblemSize>;
 
     struct ExtraParam {
         typename Mma::IteratorSrc::Params::ExtraParam extra_param_src;
@@ -209,11 +215,9 @@ struct ImplicitGemmNtPrecompConvolution {
                   ref_filter(args.ref_filter),
                   params_bias(args.ref_bias.layout()),
                   ref_bias(args.ref_bias),
-                  params_dst(args.ref_dst.layout(), kConvolutionalOperator,
-                             args.problem_size),
+                  params_dst(ConvOutputIteratorParameter::layout(args.ref_dst)),
                   ref_dst(args.ref_dst),
-                  params_z(args.ref_z.layout(), kConvolutionalOperator,
-                           args.problem_size),
+                  params_z(ConvOutputIteratorParameter::layout(args.ref_z)),
                   ref_z(args.ref_z),
                   output_op(args.output_op),
                   transform_src(args.transform_src),
@@ -221,13 +225,13 @@ struct ImplicitGemmNtPrecompConvolution {
                   workspace(workspace_) {
             if (kConvolutionalOperator == conv::Operator::kDgrad) {
                 gemm_problem_size = cutlass::gemm::GemmCoord(
-                        problem_size.C,
                         problem_size.N * problem_size.H * problem_size.W,
+                        problem_size.C,
                         problem_size.K * problem_size.R * problem_size.S);
             } else {  // Fprop
                 gemm_problem_size = cutlass::gemm::GemmCoord(
-                        problem_size.K,
                         problem_size.N * problem_size.P * problem_size.Q,
+                        problem_size.K,
                         problem_size.C * problem_size.R * problem_size.S);
             }
             conv_k_iterations = (gemm_problem_size.k() + Mma::Shape::kK - 1) /
@@ -246,7 +250,7 @@ struct ImplicitGemmNtPrecompConvolution {
     //
 
     CUTLASS_HOST_DEVICE
-    ImplicitGemmNtPrecompConvolution() {}
+    ImplicitGemmTnPrecompConvolution() {}
 
     /// Determines whether kernel satisfies alignment
     static Status can_implement(
@@ -300,23 +304,21 @@ struct ImplicitGemmNtPrecompConvolution {
                 threadblock_swizzle.template get_tile_offset<Mma::Shape>();
 
         // Compute initial location in logical coordinates
-        cutlass::MatrixCoord tb_offset_src{0, threadblock_tile_offset.n()};
+        cutlass::MatrixCoord tb_offset_src{threadblock_tile_offset.m(), 0};
 
-        cutlass::MatrixCoord tb_offset_filter{threadblock_tile_offset.m(), 0};
+        cutlass::MatrixCoord tb_offset_filter{0, threadblock_tile_offset.n()};
 
         // Compute position within threadblock
         int thread_idx = threadIdx.x;
 
         // Construct iterators to Src and Filter Tensor operands
         typename Mma::IteratorSrc iterator_src(
-                params.params_src, params.ref_src.data(),
-                {params.gemm_problem_size.k(), params.gemm_problem_size.n()},
+                params.params_src, params.problem_size, params.ref_src.data(),
                 thread_idx, tb_offset_src);
 
         typename Mma::IteratorFilter iterator_filter(
-                params.params_filter, params.ref_filter.data(),
-                {params.gemm_problem_size.m(), params.gemm_problem_size.k()},
-                thread_idx, tb_offset_filter);
+                params.params_filter, params.problem_size,
+                params.ref_filter.data(), thread_idx, tb_offset_filter);
 
         // Broadcast the warp_id computed by lane 0 to ensure dependent code
         // is compiled as warp-uniform.
@@ -360,13 +362,13 @@ struct ImplicitGemmNtPrecompConvolution {
         // Tile iterator writing to destination tensor.
         typename Epilogue::OutputTileIterator iterator_dst(
                 params.params_dst, params.ref_dst.data(),
-                {params.gemm_problem_size.m(), params.gemm_problem_size.n()},
+                ConvOutputIteratorParameter::extent(params.problem_size),
                 thread_idx, threadblock_offset);
 
         // Tile iterator loading from source tensor.
         typename Epilogue::OutputTileIterator iterator_z(
                 params.params_z, params.ref_z.data(),
-                {params.gemm_problem_size.m(), params.gemm_problem_size.n()},
+                ConvOutputIteratorParameter::extent(params.problem_size),
                 thread_idx, threadblock_offset);
 
         Epilogue epilogue(shared_storage.epilogue, thread_idx, warp_idx,

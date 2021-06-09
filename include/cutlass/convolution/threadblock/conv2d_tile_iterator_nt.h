@@ -61,7 +61,7 @@
 #include "cutlass/layout/matrix.h"
 #include "cutlass/conv/convolution.h"
 #include "cutlass/conv/conv2d_problem_size.h"
-#include "cutlass/convolution/threadblock/conv2d_tile_map.h"
+#include "cutlass/convolution/threadblock/conv2d_tile_params.h"
 #include "cutlass/transform/threadblock/predicated_tile_iterator.h"
 
 ////////////////////////////////////////////////////////////////////////////////

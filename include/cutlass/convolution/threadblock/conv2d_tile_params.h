@@ -38,7 +38,7 @@
 */
 
 /**
- * \file include/cutlass/convolution/threadblock/conv2d_tile_map.h
+ * \file include/cutlass/convolution/threadblock/conv2d_tile_params.h
  *
  * Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
  *
@@ -65,6 +65,8 @@
 
 namespace cutlass {
 namespace conv {
+
+enum class ImplicitGemmMode { GEMM_NT, GEMM_TN };
 namespace threadblock {
 
 enum class TileMapType {
@@ -167,6 +169,34 @@ struct TileMap<Layout_, TileMapType::kRow2C_Col2NHW> {
         return TensorCoord{n, h, w, c};
     }
 };
+
+struct ExtraParamZeroPoint {
+    uint8_t src_zero_point;
+
+    CUTLASS_HOST_DEVICE
+    ExtraParamZeroPoint() : src_zero_point(0) {}
+
+    CUTLASS_HOST_DEVICE
+    ExtraParamZeroPoint(uint8_t src_zero_point_)
+            : src_zero_point(src_zero_point_) {}
+};
+
+namespace detail {
+template <typename Element, typename ExtraParam>
+CUTLASS_HOST_DEVICE uint32_t prepare_pack_pad(const ExtraParam& params) {
+    return 0;
+}
+
+template <>
+CUTLASS_HOST_DEVICE uint32_t prepare_pack_pad<uint4b_t, ExtraParamZeroPoint>(
+        const ExtraParamZeroPoint& params) {
+    uint32_t ret = 0;
+    for (size_t i = 0; i < 8; i++) {
+        ret |= params.src_zero_point << (4 * i);
+    }
+    return ret;
+}
+}  // namespace detail
 
 }  // namespace threadblock
 }  // namespace conv

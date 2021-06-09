@@ -149,8 +149,8 @@ implicit GEMM kernel.
 #include <iostream>
 #include <sstream>
 
-#include "cutlass/convolution/device/implicit_gemm_nt_convolution.h"
-#include "cutlass/convolution/kernel/default_conv2d_nt_dgrad.h"
+#include "cutlass/convolution/device/implicit_gemm_precomp_convolution.h"
+#include "cutlass/convolution/kernel/default_conv2d_dgrad.h"
 #include "cutlass/cutlass.h"
 #include "cutlass/gemm/device/gemm.h"
 
@@ -219,14 +219,16 @@ using EpilogueOp = cutlass::epilogue::thread::BiasAddLinearCombinationClamp<
         ElementComputeEpilogue>;  // Data type for alpha/beta in linear
                                   // combination
 
-using Conv2dDgradKernel = typename cutlass::conv::kernel::DefaultConv2dNtDgrad<
-        ElementInputA, LayoutInputA, ElementInputB, LayoutInputB, ElementOutput,
-        LayoutOutput, ElementAccumulator, MMAOp, SmArch, ThreadblockShape,
-        WarpShape, InstructionShape, EpilogueOp, SwizzleThreadBlock, NumStages,
-        cutlass::arch::OpMultiplyAddSaturate, 16, 16>::Kernel;
+using Conv2dDgradKernel =
+        typename cutlass::conv::kernel::DefaultConvolution2dDgrad<
+                ElementInputA, LayoutInputA, ElementInputB, LayoutInputB,
+                ElementOutput, LayoutOutput, ElementAccumulator, MMAOp, SmArch,
+                ThreadblockShape, WarpShape, InstructionShape, EpilogueOp,
+                SwizzleThreadBlock, NumStages,
+                cutlass::arch::OpMultiplyAddSaturate, 16, 16>::Kernel;
 
-using ImplicitGemm =
-        cutlass::conv::device::ImplicitGemmNtConvolution<Conv2dDgradKernel>;
+using ImplicitGemm = cutlass::conv::device::ImplicitGemmPrecompConvolution<
+        Conv2dDgradKernel>;
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 

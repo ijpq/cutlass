@@ -60,6 +60,7 @@
 #include "cutlass/convolution/threadblock/implicit_mma_pipelined.h"
 #include "cutlass/convolution/threadblock/implicit_mma_singlestage.h"
 #include "cutlass/convolution/threadblock/implicit_mma_nt_precomp.h"
+#include "cutlass/convolution/threadblock/implicit_mma_tn_precomp.h"
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 

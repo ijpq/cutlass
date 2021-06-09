@@ -37,7 +37,7 @@ WAY OUT OF THE USE
  *
  **************************************************************************************************/
 /**
- * \file include/cutlass/convolution/kernel/default_conv2d_nt_dgrad.h
+ * \file include/cutlass/convolution/kernel/default_conv2d_dgrad.h
  *
  * Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
  *
@@ -124,8 +124,10 @@ template <typename ElementSrc,
           /// Access granularity of Filter Tensor in units of elements
           int AlignmentFilter,
           /// whether use special optimization for conv 1x1
-          bool NeedLoadFromConstMem = true>
-struct DefaultConv2dNtDgrad;
+          bool NeedLoadFromConstMem = true,
+          /// Implicit Gemm Mode
+          ImplicitGemmMode GemmMode = ImplicitGemmMode::GEMM_NT>
+struct DefaultConvolution2dDgrad;
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -156,7 +158,7 @@ template <typename LayoutDst,
           int kAlignmentFilter,
           /// whether use special optimization for conv 1x1
           bool NeedLoadFromConstMem>
-struct DefaultConv2dNtDgrad<
+struct DefaultConvolution2dDgrad<
         int8_t, layout::TensorNCxHWx<4>, int8_t, layout::TensorKxRSCx<4>,
         ElementDst, LayoutDst, ElementAccumulator, arch::OpClassSimt, ArchTag,
         ThreadblockShape, WarpShape, gemm::GemmShape<1, 1, 4>, EpilogueOutputOp,
@@ -264,7 +266,7 @@ template <  /// Layout type for Dst and Z Tensor operand
         int kAlignmentSrc,
         /// Access granularity of Filter Tensor in units of elements
         int kAlignmentFilter, bool NeedLoadFromConstMem>
-struct DefaultConv2dNtDgrad<
+struct DefaultConvolution2dDgrad<
         int8_t, layout::TensorNCxHWx<Interleaved>, int8_t,
         layout::TensorKxRSCx<Interleaved>, ElementDst, LayoutDst,
         ElementAccumulator, arch::OpClassTensorOp, arch::Sm75, ThreadblockShape,
@@ -365,7 +367,7 @@ template <  /// Element type for Dst and Z Tensor operands
         int kAlignmentSrc,
         /// Access granularity of Filter Tensor in units of elements
         int kAlignmentFilter, bool NeedLoadFromConstMem>
-struct DefaultConv2dNtDgrad<
+struct DefaultConvolution2dDgrad<
         int8_t, layout::TensorNCxHWx<Interleaved>, int8_t,
         layout::TensorKxRSCx<Interleaved>, ElementDst, layout::TensorNCxHWx<4>,
         ElementAccumulator, arch::OpClassTensorOp, arch::Sm75, ThreadblockShape,

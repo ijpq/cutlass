@@ -530,6 +530,82 @@ bool TestAllConvolution() {
     return passed;
 }
 
+template <typename Convolution>
+bool TestConvolutionNHWC() {
+    bool passed = true;
+
+    double problem_alpha[] = {0.019980327};
+
+    double problem_beta[] = {0.02};
+
+    double problem_gamma[] = {0.019990229};
+
+    Testbed<Convolution> testbed;
+
+    using ElementCompute =
+            typename Convolution::EpilogueOutputOp::ElementCompute;
+
+    using ConvolutionParameter = cutlass::conv::Conv2dProblemSize;
+    std::vector<ConvolutionParameter> args;
+    cutlass::conv::Mode mode = cutlass::conv::Mode::kCrossCorrelation;
+
+    for (int n : {8, 24, 33}) {
+        for (int ic : {8, 16, 32}) {
+            for (int oc : {16, 24, 32}) {
+                for (int ih : {7}) {
+                    for (int iw : {9}) {
+                        for (int fh : {1, 3, 5}) {
+                            for (int ph : {static_cast<int>(fh / 2), 0}) {
+                                for (int sh : {1, 2}) {
+                                    int oh = (ih + 2 * ph - fh) / sh + 1;
+                                    int ow = (iw + 2 * ph - fh) / sh + 1;
+                                    args.emplace_back(ConvolutionParameter{
+                                            n, ih, iw, ic, oc, fh, fh, oh, ow,
+                                            ph, ph, sh, sh, 1, 1, mode});
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for (auto arg : args) {
+        for (auto alpha : problem_alpha) {
+            for (auto beta : problem_beta) {
+                for (auto gamma : problem_gamma) {
+                    if (cutlass::platform::is_same<
+                                cutlass::layout::TensorNCxHWx<8>,
+                                typename Convolution::LayoutFilter>::value &&
+                        (arg.K % 8 != 0 || arg.C % 8 != 0))
+                        continue;
+                    else if (cutlass::platform::is_same<
+                                     cutlass::layout::TensorNCxHWx<16>,
+                                     typename Convolution::LayoutFilter>::
+                                     value &&
+                             (arg.K % 16 != 0 || arg.C % 16 != 0))
+                        continue;
+                    else if (cutlass::platform::is_same<
+                                     cutlass::layout::TensorNCxHWx<32>,
+                                     typename Convolution::LayoutFilter>::
+                                     value &&
+                             (arg.K % 32 != 0 || arg.C % 32 != 0))
+                        continue;
+                    passed = testbed.run(
+                            arg, cutlass::from_real<ElementCompute>(alpha),
+                            cutlass::from_real<ElementCompute>(beta),
+                            cutlass::from_real<ElementCompute>(gamma));
+                    if (!passed) {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    return passed;
+}
+
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
 template <typename Convolution>

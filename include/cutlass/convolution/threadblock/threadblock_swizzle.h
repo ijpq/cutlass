@@ -166,6 +166,37 @@ struct ConvolutionFpropNCxHWxThreadblockSwizzle {
     }
 };
 
+struct ConvolutionFpropNHWCThreadblockSwizzle {
+    CUTLASS_HOST_DEVICE
+    ConvolutionFpropNHWCThreadblockSwizzle() {}
+
+    /// Returns the shape of the problem in units of logical tiles
+    CUTLASS_HOST_DEVICE
+    gemm::GemmCoord get_tiled_shape(Conv2dProblemSize const& problem_size,
+                                    gemm::GemmCoord const& tile_size) const {
+        return gemm::GemmCoord(
+                (problem_size.N * problem_size.P * problem_size.Q +
+                 tile_size.m() - 1) /
+                        tile_size.m(),
+                (problem_size.K + tile_size.n() - 1) / tile_size.n(), 1);
+    }
+
+    /// Computes CUDA grid dimensions given a size in units of logical tiles
+    CUTLASS_HOST_DEVICE
+    dim3 get_grid_shape(gemm::GemmCoord const& tiled_shape) const {
+        return dim3(tiled_shape.m(), tiled_shape.n(), tiled_shape.k());
+    }
+
+    /// Obtains the threadblock offset (in units of threadblock-scoped tiles)
+    template <typename Shape>
+    CUTLASS_DEVICE gemm::GemmCoord get_tile_offset() const {
+        int block_idx_x = cutlass::gemm::threadblock::RematerializeBlockIdxX();
+        int block_idx_y = cutlass::gemm::threadblock::RematerializeBlockIdxY();
+        return gemm::GemmCoord(block_idx_x * Shape::kM, block_idx_y * Shape::kN,
+                               1);
+    }
+};
+
 struct ConvolutionDgradNCxHWxThreadblockSwizzle {
     CUTLASS_HOST_DEVICE
     ConvolutionDgradNCxHWxThreadblockSwizzle() {}
