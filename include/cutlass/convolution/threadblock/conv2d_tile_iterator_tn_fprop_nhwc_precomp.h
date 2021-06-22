@@ -555,7 +555,7 @@ private:
     uint32_t predicates_;
 
     // We map predicates into bits packed in this uint32_t container
-    static_assert(ThreadMap::Iterations::kStrided < sizeof(predicates_) * 8,
+    static_assert(ThreadMap::Iterations::kStrided < sizeof(uint32_t) * 8,
                   "Currently, the number of loads per iteration is limited by "
                   "the size of the predicates container.");
 
@@ -762,7 +762,7 @@ private:
     uint32_t predicates_;
 
     // We map predicates into bits packed in this uint32_t container
-    static_assert(ThreadMap::Iterations::kStrided < sizeof(predicates_) * 8,
+    static_assert(ThreadMap::Iterations::kStrided < sizeof(uint32_t) * 8,
                   "Currently, the number of loads per iteration is limited by "
                   "the size of the predicates container.");
 

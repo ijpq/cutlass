@@ -280,11 +280,8 @@ struct ImplicitGemmNtPrecompConvolution {
         }
 
         Status status = Mma::IteratorSrc::can_implement(problem_size);
-        if (Status::kSuccess != status) {
-            return status;
-        }
 
-        return Status::kSuccess;
+        return status;
     }
 
     /// Gets the workspace size

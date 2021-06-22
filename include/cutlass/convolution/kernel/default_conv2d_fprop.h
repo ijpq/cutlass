@@ -176,8 +176,8 @@ struct DefaultConvolution2dFprop<
     using MmaCore = typename cutlass::conv::threadblock::DefaultMmaCore<
             ThreadblockShape, WarpShape, InstructionShape, ElementSrc,
             LayoutSrc, kAlignmentSrc, ElementFilter, LayoutFilter,
-            kAlignmentFilter, ElementAccumulator, LayoutDst, OperatorClass, 2,
-            MathOperatorTag, true>;
+            kAlignmentFilter, ElementAccumulator, LayoutDst, OperatorClass,
+            Stages, MathOperatorTag, true>;
 
     // Define iterators over tiles from the Src Tensor operand
     using IteratorSrc = cutlass::conv::threadblock::Conv2dTileIterator<
@@ -276,8 +276,8 @@ struct DefaultConvolution2dFprop<
     using MmaCore = typename cutlass::conv::threadblock::DefaultMmaCore<
             ThreadblockShape, WarpShape, InstructionShape, ElementSrc,
             LayoutSrc, kAlignmentSrc, ElementFilter, LayoutFilter,
-            kAlignmentFilter, ElementAccumulator, LayoutDst, OperatorClass, 2,
-            MathOperatorTag, true>;
+            kAlignmentFilter, ElementAccumulator, LayoutDst, OperatorClass,
+            Stages, MathOperatorTag, true>;
 
     // Define iterators over tiles from the Src Tensor operand
     using IteratorSrc =
@@ -447,6 +447,8 @@ template <  /// Layout type for Dst and Z Tensor operand
         typename EpilogueOutputOp,
         /// Threadblock-level swizzling operator
         typename ThreadblockSwizzle,
+        /// Number of stages used in the pipelined mainloop
+        int Stages,
         /// Interleaving quantity
         int Interleaved,
         /// Operation performed by GEMM
@@ -459,8 +461,8 @@ struct DefaultConvolution2dFprop<
         int8_t, layout::TensorNCxHWx<Interleaved>, int8_t,
         layout::TensorCxRSKx<Interleaved>, ElementDst, LayoutDst_,
         ElementAccumulator, arch::OpClassTensorOp, arch::Sm75, ThreadblockShape,
-        WarpShape, InstructionShape, EpilogueOutputOp, ThreadblockSwizzle, 2,
-        MathOperatorTag, kAlignmentSrc, kAlignmentFilter,
+        WarpShape, InstructionShape, EpilogueOutputOp, ThreadblockSwizzle,
+        Stages, MathOperatorTag, kAlignmentSrc, kAlignmentFilter,
         NeedLoadFromConstMem> {
     using ElementSrc = int8_t;
     using ElementFilter = int8_t;
@@ -468,6 +470,7 @@ struct DefaultConvolution2dFprop<
     using LayoutFilter = layout::TensorCxRSKx<Interleaved>;
     using LayoutDst = layout::TensorNCxHWx<Interleaved>;
     using OperatorClass = arch::OpClassTensorOp;
+    static const int kStages = Stages;
 
     static_assert(kAlignmentSrc == 128 / sizeof_bits<ElementSrc>::value,
                   "Alignment must match thread data map's vector length");
@@ -479,8 +482,8 @@ struct DefaultConvolution2dFprop<
     using MmaCore = typename cutlass::conv::threadblock::DefaultMmaCore<
             ThreadblockShape, WarpShape, InstructionShape, ElementSrc,
             LayoutSrc, kAlignmentSrc, ElementFilter, LayoutFilter,
-            kAlignmentFilter, ElementAccumulator, LayoutDst, OperatorClass, 2,
-            MathOperatorTag, true>;
+            kAlignmentFilter, ElementAccumulator, LayoutDst, OperatorClass,
+            Stages, MathOperatorTag, true>;
 
     // Define iterators over tiles from the Src Tensor operand
     using IteratorSrc =
@@ -506,11 +509,22 @@ struct DefaultConvolution2dFprop<
                     cutlass::conv::threadblock::TileMapType::kRow2CHW_Col2N>>;
 
     // Define the threadblock-scoped pipelined matrix multiply
-    using Mma = typename cutlass::conv::threadblock::MmaNtPrecompPipelined<
-            typename MmaCore::Shape, IteratorSrc,
-            typename MmaCore::SmemIteratorSrc, IteratorFilter,
-            typename MmaCore::SmemIteratorFilter, ElementAccumulator, LayoutDst,
-            typename MmaCore::MmaPolicy>;
+    using MmaPipelineSingleStage =
+            cutlass::conv::threadblock::MmaNtPrecompSingleStage<
+                    typename MmaCore::Shape, IteratorSrc,
+                    typename MmaCore::SmemIteratorSrc, IteratorFilter,
+                    typename MmaCore::SmemIteratorFilter, ElementAccumulator,
+                    LayoutDst, typename MmaCore::MmaPolicy>;
+
+    using MmaPipelineTwoStages =
+            cutlass::conv::threadblock::MmaNtPrecompPipelined<
+                    typename MmaCore::Shape, IteratorSrc,
+                    typename MmaCore::SmemIteratorSrc, IteratorFilter,
+                    typename MmaCore::SmemIteratorFilter, ElementAccumulator,
+                    LayoutDst, typename MmaCore::MmaPolicy>;
+
+    using Mma = typename cutlass::platform::conditional<
+            (kStages == 1), MmaPipelineSingleStage, MmaPipelineTwoStages>::type;
 
     /// 64 bit store
     static int const kEpilogueElementsPerAccess =
@@ -551,6 +565,8 @@ template <
         typename EpilogueOutputOp,
         /// Threadblock-level swizzling operator
         typename ThreadblockSwizzle,
+        /// Number of stages used in the pipelined mainloop
+        int Stages,
         /// Interleaving quantity
         int Interleaved,
         /// Operation performed by GEMM
@@ -564,7 +580,7 @@ struct DefaultConvolution2dFprop<
         layout::TensorCxRSKx<Interleaved>, ElementDst,
         layout::TensorNCxHWx<Interleaved>, ElementAccumulator,
         arch::OpClassTensorOp, arch::Sm75, ThreadblockShape, WarpShape,
-        InstructionShape, EpilogueOutputOp, ThreadblockSwizzle, 2,
+        InstructionShape, EpilogueOutputOp, ThreadblockSwizzle, Stages,
         MathOperatorTag, kAlignmentSrc, kAlignmentFilter,
         NeedLoadFromConstMem> {
     static_assert(Interleaved == 64, "Interleaved must be divisible by 64");
@@ -575,6 +591,7 @@ struct DefaultConvolution2dFprop<
     using LayoutFilter = layout::TensorCxRSKx<Interleaved>;
     using LayoutDst = layout::TensorNCxHWx<Interleaved>;
     using OperatorClass = arch::OpClassTensorOp;
+    static const int kStages = Stages;
 
     static_assert(kAlignmentSrc == 128 / sizeof_bits<ElementSrc>::value,
                   "Alignment must match thread data map's vector length");
@@ -586,8 +603,8 @@ struct DefaultConvolution2dFprop<
     using MmaCore = typename cutlass::conv::threadblock::DefaultMmaCore<
             ThreadblockShape, WarpShape, InstructionShape, ElementSrc,
             LayoutSrc, kAlignmentSrc, ElementFilter, LayoutFilter,
-            kAlignmentFilter, ElementAccumulator, LayoutDst, OperatorClass, 2,
-            MathOperatorTag, true>;
+            kAlignmentFilter, ElementAccumulator, LayoutDst, OperatorClass,
+            Stages, MathOperatorTag, true>;
 
     // Define iterators over tiles from the Src Tensor operand
     using IteratorSrc =
@@ -613,11 +630,22 @@ struct DefaultConvolution2dFprop<
                     cutlass::conv::threadblock::TileMapType::kRow2CHW_Col2N>>;
 
     // Define the threadblock-scoped pipelined matrix multiply
-    using Mma = typename cutlass::conv::threadblock::MmaNtPrecompPipelined<
-            typename MmaCore::Shape, IteratorSrc,
-            typename MmaCore::SmemIteratorSrc, IteratorFilter,
-            typename MmaCore::SmemIteratorFilter, ElementAccumulator, LayoutDst,
-            typename MmaCore::MmaPolicy>;
+    using MmaPipelineSingleStage =
+            cutlass::conv::threadblock::MmaNtPrecompSingleStage<
+                    typename MmaCore::Shape, IteratorSrc,
+                    typename MmaCore::SmemIteratorSrc, IteratorFilter,
+                    typename MmaCore::SmemIteratorFilter, ElementAccumulator,
+                    LayoutDst, typename MmaCore::MmaPolicy>;
+
+    using MmaPipelineTwoStages =
+            cutlass::conv::threadblock::MmaNtPrecompPipelined<
+                    typename MmaCore::Shape, IteratorSrc,
+                    typename MmaCore::SmemIteratorSrc, IteratorFilter,
+                    typename MmaCore::SmemIteratorFilter, ElementAccumulator,
+                    LayoutDst, typename MmaCore::MmaPolicy>;
+
+    using Mma = typename cutlass::platform::conditional<
+            (kStages == 1), MmaPipelineSingleStage, MmaPipelineTwoStages>::type;
 
     /// 64 bit store
     static int const kEpilogueElementsPerAccess =
@@ -653,6 +681,8 @@ template <  /// Element type for Dst and Z Tensor operands
         typename EpilogueOutputOp,
         /// Threadblock-level swizzling operator
         typename ThreadblockSwizzle,
+        /// Number of stages used in the pipelined mainloop
+        int Stages,
         /// Interleaving quantity
         int Interleaved,
         /// Operation performed by GEMM
@@ -665,8 +695,8 @@ struct DefaultConvolution2dFprop<
         int8_t, layout::TensorNCxHWx<Interleaved>, int8_t,
         layout::TensorCxRSKx<Interleaved>, ElementDst, layout::TensorNCxHWx<4>,
         ElementAccumulator, arch::OpClassTensorOp, arch::Sm75, ThreadblockShape,
-        WarpShape, InstructionShape, EpilogueOutputOp, ThreadblockSwizzle, 2,
-        MathOperatorTag, kAlignmentSrc, kAlignmentFilter,
+        WarpShape, InstructionShape, EpilogueOutputOp, ThreadblockSwizzle,
+        Stages, MathOperatorTag, kAlignmentSrc, kAlignmentFilter,
         NeedLoadFromConstMem> {
     using ElementSrc = int8_t;
     using ElementFilter = int8_t;
@@ -675,6 +705,7 @@ struct DefaultConvolution2dFprop<
     using LayoutDst = layout::TensorNCxHWx<4>;
 
     using OperatorClass = arch::OpClassTensorOp;
+    static const int kStages = Stages;
 
     static_assert(kAlignmentSrc == 128 / sizeof_bits<ElementSrc>::value,
                   "Alignment must match thread data map's vector length");
@@ -686,8 +717,8 @@ struct DefaultConvolution2dFprop<
     using MmaCore = typename cutlass::conv::threadblock::DefaultMmaCore<
             ThreadblockShape, WarpShape, InstructionShape, ElementSrc,
             LayoutSrc, kAlignmentSrc, ElementFilter, LayoutFilter,
-            kAlignmentFilter, ElementAccumulator, LayoutDst, OperatorClass, 2,
-            MathOperatorTag, true>;
+            kAlignmentFilter, ElementAccumulator, LayoutDst, OperatorClass,
+            Stages, MathOperatorTag, true>;
 
     // Define iterators over tiles from the Src Tensor operand
     using IteratorSrc =
@@ -713,11 +744,22 @@ struct DefaultConvolution2dFprop<
                     cutlass::conv::threadblock::TileMapType::kRow2CHW_Col2N>>;
 
     // Define the threadblock-scoped pipelined matrix multiply
-    using Mma = typename cutlass::conv::threadblock::MmaNtPrecompPipelined<
-            typename MmaCore::Shape, IteratorSrc,
-            typename MmaCore::SmemIteratorSrc, IteratorFilter,
-            typename MmaCore::SmemIteratorFilter, ElementAccumulator, LayoutDst,
-            typename MmaCore::MmaPolicy>;
+    using MmaPipelineSingleStage =
+            cutlass::conv::threadblock::MmaNtPrecompSingleStage<
+                    typename MmaCore::Shape, IteratorSrc,
+                    typename MmaCore::SmemIteratorSrc, IteratorFilter,
+                    typename MmaCore::SmemIteratorFilter, ElementAccumulator,
+                    LayoutDst, typename MmaCore::MmaPolicy>;
+
+    using MmaPipelineTwoStages =
+            cutlass::conv::threadblock::MmaNtPrecompPipelined<
+                    typename MmaCore::Shape, IteratorSrc,
+                    typename MmaCore::SmemIteratorSrc, IteratorFilter,
+                    typename MmaCore::SmemIteratorFilter, ElementAccumulator,
+                    LayoutDst, typename MmaCore::MmaPolicy>;
+
+    using Mma = typename cutlass::platform::conditional<
+            (kStages == 1), MmaPipelineSingleStage, MmaPipelineTwoStages>::type;
 
     /// 32 bit store
     static int const kEpilogueElementsPerAccess =
@@ -752,6 +794,8 @@ template <
         typename EpilogueOutputOp,
         /// Threadblock-level swizzling operator
         typename ThreadblockSwizzle,
+        /// Number of stages used in the pipelined mainloop
+        int Stages,
         /// Operation performed by GEMM
         typename MathOperatorTag,
         /// Access granularity of Src Tensor in units of elements
@@ -762,15 +806,16 @@ struct DefaultConvolution2dFprop<
         integer_subbyte<4, Signed>, layout::TensorNHWC, int4b_t,
         layout::TensorNCxHWx<kAlignmentFilter>, ElementDst, layout::TensorNHWC,
         ElementAccumulator, arch::OpClassTensorOp, arch::Sm75, ThreadblockShape,
-        WarpShape, InstructionShape, EpilogueOutputOp, ThreadblockSwizzle, 2,
-        MathOperatorTag, kAlignmentSrc, kAlignmentFilter, NeedLoadFromConstMem,
-        ImplicitGemmMode::GEMM_TN> {
+        WarpShape, InstructionShape, EpilogueOutputOp, ThreadblockSwizzle,
+        Stages, MathOperatorTag, kAlignmentSrc, kAlignmentFilter,
+        NeedLoadFromConstMem, ImplicitGemmMode::GEMM_TN> {
     using ElementSrc = integer_subbyte<4, Signed>;
     using ElementFilter = int4b_t;
     using LayoutSrc = layout::TensorNHWC;
     using LayoutFilter = layout::TensorNCxHWx<kAlignmentFilter>;
     using LayoutDst = layout::TensorNHWC;
     using OperatorClass = arch::OpClassTensorOp;
+    static const int kStages = Stages;
 
     static_assert(kAlignmentSrc == kAlignmentFilter,
                   "kAlignmentSrc and kAlignmentFilter must be the same");
@@ -807,11 +852,23 @@ struct DefaultConvolution2dFprop<
                     kAlignmentFilter>;
 
     // Define the threadblock-scoped pipelined matrix multiply
-    using Mma = typename cutlass::conv::threadblock::MmaTnPrecompPipelined<
-            typename MmaCore::Shape, IteratorSrc,
-            typename MmaCore::SmemIteratorSrc, IteratorFilter,
-            typename MmaCore::SmemIteratorFilter, ElementAccumulator, LayoutDst,
-            typename MmaCore::MmaPolicy>;
+    using MmaPipelineSingleStage =
+            cutlass::conv::threadblock::MmaTnPrecompSingleStage<
+                    typename MmaCore::Shape, IteratorSrc,
+                    typename MmaCore::SmemIteratorSrc, IteratorFilter,
+                    typename MmaCore::SmemIteratorFilter, ElementAccumulator,
+                    LayoutDst, typename MmaCore::MmaPolicy>;
+
+    // Define the threadblock-scoped pipelined matrix multiply
+    using MmaPipelineTwoStages =
+            cutlass::conv::threadblock::MmaTnPrecompPipelined<
+                    typename MmaCore::Shape, IteratorSrc,
+                    typename MmaCore::SmemIteratorSrc, IteratorFilter,
+                    typename MmaCore::SmemIteratorFilter, ElementAccumulator,
+                    LayoutDst, typename MmaCore::MmaPolicy>;
+
+    using Mma = typename cutlass::platform::conditional<
+            (kStages == 1), MmaPipelineSingleStage, MmaPipelineTwoStages>::type;
 
     using Epilogue = typename cutlass::epilogue::threadblock::
             ConvolutionEpilogueTensorOp<ThreadblockShape, LayoutDst, LayoutDst,

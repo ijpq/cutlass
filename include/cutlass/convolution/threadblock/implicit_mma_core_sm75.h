@@ -377,12 +377,14 @@ template <
         typename ElementDst_,
         /// Layout of accumulator
         typename LayoutDst_,
+        /// Number of stages used in the pipelined mainloop
+        int Stages,
         /// Operation performed by Convolution
         typename Operator_>
 struct DefaultMmaCore<Shape_, WarpShape_, gemm::GemmShape<8, 8, 32>,
                       integer_subbyte<4, Signed>, layout::TensorNCxHWx<64>,
                       kAlignmentSrc, int4b_t, LayoutFilter_, kAlignmentFilter,
-                      ElementDst_, LayoutDst_, arch::OpClassTensorOp, 2,
+                      ElementDst_, LayoutDst_, arch::OpClassTensorOp, Stages,
                       Operator_, true> {
     using Shape = Shape_;
     using WarpShape = WarpShape_;
@@ -537,13 +539,15 @@ template <
         typename ElementDst_,
         /// Layout of accumulator
         typename LayoutDst_,
+        /// Number of stages used in the pipelined mainloop
+        int Stages,
         /// Operation performed by Convolution
         typename Operator_>
 struct DefaultMmaCore<
         Shape_, WarpShape_, gemm::GemmShape<8, 8, 32>,
         integer_subbyte<4, Signed>, layout::TensorNHWC, kAlignmentSrc, int4b_t,
         layout::TensorNCxHWx<kAlignmentFilter>, kAlignmentFilter, ElementDst_,
-        LayoutDst_, arch::OpClassTensorOp, 2, Operator_> {
+        LayoutDst_, arch::OpClassTensorOp, Stages, Operator_> {
     using Shape = Shape_;
     using WarpShape = WarpShape_;
     using InstructionShape = gemm::GemmShape<8, 8, 32>;

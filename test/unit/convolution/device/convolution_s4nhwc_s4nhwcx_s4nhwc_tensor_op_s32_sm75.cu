@@ -55,7 +55,7 @@
 
 #include "testbed.h"
 
-#define RUN_CONVOLUTION(AccessSize)                                          \
+#define RUN_CONVOLUTION(AccessSize, Stages)                                  \
     do {                                                                     \
         using ElementOutput = cutlass::int4b_t;                              \
         using ElementAccumulator = int32_t;                                  \
@@ -76,7 +76,7 @@
                         ElementAccumulator, ElementBias, ElementCompute>,    \
                 cutlass::conv::threadblock::                                 \
                         ConvolutionFpropNHWCThreadblockSwizzle,              \
-                2, AccessSize, AccessSize, true,                             \
+                Stages, AccessSize, AccessSize, true,                        \
                 cutlass::arch::OpMultiplyAddSaturate,                        \
                 cutlass::conv::ImplicitGemmMode::GEMM_TN>;                   \
         EXPECT_TRUE(test::convolution::device::TestConvolutionNHWC<          \
@@ -89,27 +89,27 @@ TEST(SM75_Device_Convolution_s4_s4_NHWC_tensor_op_mmai8832,
      128x128x128_64x64x128) {
     using ThreadBlockShape = cutlass::gemm::GemmShape<128, 128, 128>;
     using WarpShape = cutlass::gemm::GemmShape<64, 64, 128>;
-    RUN_CONVOLUTION(8);
-    RUN_CONVOLUTION(16);
-    RUN_CONVOLUTION(32);
+    RUN_CONVOLUTION(8, 2);
+    RUN_CONVOLUTION(16, 1);
+    RUN_CONVOLUTION(32, 1);
 }
 
 TEST(SM75_Device_Convolution_s4_s4_NHWC_tensor_op_mmai8832,
      128x64x128_64x32x128) {
     using ThreadBlockShape = cutlass::gemm::GemmShape<128, 64, 128>;
     using WarpShape = cutlass::gemm::GemmShape<64, 32, 128>;
-    RUN_CONVOLUTION(8);
-    RUN_CONVOLUTION(16);
-    RUN_CONVOLUTION(32);
+    RUN_CONVOLUTION(8, 1);
+    RUN_CONVOLUTION(16, 2);
+    RUN_CONVOLUTION(32, 2);
 }
 
 TEST(SM75_Device_Convolution_s4_s4_NHWC_tensor_op_mmai8832,
      128x32x64_64x32x64) {
     using ThreadBlockShape = cutlass::gemm::GemmShape<128, 32, 64>;
     using WarpShape = cutlass::gemm::GemmShape<64, 32, 64>;
-    RUN_CONVOLUTION(8);
-    RUN_CONVOLUTION(16);
-    RUN_CONVOLUTION(32);
+    RUN_CONVOLUTION(8, 1);
+    RUN_CONVOLUTION(16, 2);
+    RUN_CONVOLUTION(32, 1);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
