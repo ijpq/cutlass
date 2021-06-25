@@ -130,4 +130,37 @@ TEST(SM75_Device_Convolution_u4_s4_NC64HW64_tensor_op_mmai8832,
     RUN_CONVOLUTION;
 }
 
+#define RUN_CONVOLUTION_REORDERK                                               \
+    do {                                                                       \
+        using ElementOutput = cutlass::int4b_t;                                \
+        using ElementAccumulator = int32_t;                                    \
+        using ElementBias = int32_t;                                           \
+        using ElementCompute = float;                                          \
+        using InstructionShape = cutlass::gemm::GemmShape<8, 8, 32>;           \
+        using Convolution = cutlass::conv::device::Convolution<                \
+                cutlass::uint4b_t, cutlass::layout::TensorNCxHWx<64>,          \
+                cutlass::int4b_t, cutlass::layout::TensorCxRSKx<64>,           \
+                ElementOutput, cutlass::layout::TensorNCxHWx<64>, ElementBias, \
+                cutlass::layout::TensorNCxHWx<64>, ElementAccumulator,         \
+                cutlass::conv::ConvType::kConvolution,                         \
+                cutlass::arch::OpClassTensorOp, cutlass::arch::Sm75,           \
+                ThreadBlockShape, WarpShape, InstructionShape,                 \
+                cutlass::epilogue::thread::BiasAddLinearCombinationClamp<      \
+                        ElementOutput, 16, ElementAccumulator, ElementBias,    \
+                        ElementCompute>,                                       \
+                cutlass::conv::threadblock::                                   \
+                        ConvolutionFpropTransThreadblockSwizzle,               \
+                2, 32, 32, true, cutlass::arch::OpMultiplyAddSaturate,         \
+                cutlass::conv::ImplicitGemmMode::GEMM_TN, true>;               \
+        EXPECT_TRUE(test::convolution::device::TestConvolutionMmaReorderK<     \
+                    Convolution>(64));                                         \
+    } while (0)
+
+TEST(SM75_Device_Convolution_u4_s4_NC64HW64_tensor_op_mmai8832_reorderK,
+     128x128x128_64x64x128) {
+    using ThreadBlockShape = cutlass::gemm::GemmShape<128, 128, 128>;
+    using WarpShape = cutlass::gemm::GemmShape<64, 64, 128>;
+    RUN_CONVOLUTION_REORDERK;
+}
+
 ////////////////////////////////////////////////////////////////////////////////

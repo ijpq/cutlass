@@ -52,6 +52,7 @@
 #include "cutlass/matrix_shape.h"
 #include "cutlass/numeric_types.h"
 #include "cutlass/tensor_ref.h"
+#include "cutlass/epilogue/threadblock/output_tile_thread_map.h"
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -192,6 +193,48 @@ struct ConvolutionOutputTileOptimalThreadMapTensorOp {
             return warp_offset * warp_footprint + thread_offset_in_warp;
         }
     };
+};
+
+////////////////////////////////////////////////////////////////////////////////
+
+/// Template metaprogram for partitioning a 4D interleaved layout across warps
+/// to achieve several performance objectives:
+///
+///   - coalesced memory accesses in units of 64 Byte lines
+///   - minimal address arithmetic
+///   - minimal predicate calculations
+///
+template <typename Shape_, typename WarpCount_, typename Iterations_,
+          int Threads, int ElementsPerAccess, int ElementSize>
+struct InterleavedConvolutionOutputTileThreadMap {
+    using Shape = Shape_;
+    using Count = Iterations_;
+    using WarpCount = WarpCount_;
+
+    static int const kWarpSize = 32;
+    static int const kThreads = Threads;
+    static int const kWarpCount = kThreads / kWarpSize;
+
+    static int const kElementsPerAccess = ElementsPerAccess;
+    static int const kElementSize = ElementSize;
+
+    //
+    // Output
+    //
+
+    using Iterations = Iterations_;
+
+    using Type =
+            InterleavedConvOutputTileThreadMap<WarpCount, Iterations, Threads,
+                                               ElementsPerAccess, ElementSize>;
+
+    using Delta = typename Type::Delta;
+
+    /// Initial offset function
+    CUTLASS_HOST_DEVICE
+    static MatrixCoord initial_offset(int thread_idx) {
+        return Type::initial_offset(thread_idx);
+    }
 };
 
 ////////////////////////////////////////////////////////////////////////////////

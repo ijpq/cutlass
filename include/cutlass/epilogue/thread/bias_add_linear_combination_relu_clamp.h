@@ -355,7 +355,6 @@ public:
         intermediate = plus_delta(delta_, intermediate);  // D = D + delta
 
         // Compute threshold optionally
-        intermediate = relu(threshold_, intermediate);
         intermediate = relu(threshold_, intermediate);    // D = relu(D)
         intermediate = plus_theta(theta_, intermediate);  // D = D + theta
 

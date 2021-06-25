@@ -62,7 +62,6 @@
 #include "cutlass/layout/matrix.h"
 #include "cutlass/conv/convolution.h"
 #include "cutlass/conv/conv2d_problem_size.h"
-#include "cutlass/conv/threadblock/conv2d_params.h"
 #include "cutlass/convolution/threadblock/conv2d_tile_params.h"
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -180,6 +179,10 @@ public:
     FastDivmod pq_divmod;
     FastDivmod q_divmod;
 
+    int N, H, W, C, R, S;
+    int pad_h, pad_w;
+    int stride_h, stride_w;
+
     CUTLASS_HOST_DEVICE
     FpropPrecompNHWCParams() : layout_(Layout()) {}
 
@@ -197,6 +200,17 @@ public:
                                Shape::kColumn / kAccessSize;
         constant_offset_rewind_ = (1 - problem_size.R * problem_size.S) *
                                   Shape::kColumn / kAccessSize;
+
+        N = problem_size.N;
+        H = problem_size.H;
+        W = problem_size.W;
+        C = problem_size.C;
+        R = problem_size.R;
+        S = problem_size.S;
+        pad_h = problem_size.pad_h;
+        pad_w = problem_size.pad_w;
+        stride_h = problem_size.stride_h;
+        stride_w = problem_size.stride_w;
 
         // Host Init
         pack_pad_ = detail::prepare_pack_pad<Element, ExtraParam>(extra_param);
@@ -236,6 +250,10 @@ public:
     FastDivmod pq_divmod;
     FastDivmod q_divmod;
 
+    int N, H, W, C;
+    int pad_h, pad_w;
+    int stride_h, stride_w;
+
     CUTLASS_HOST_DEVICE
     FpropPrecompNHWCParams() : layout_(Layout()) {}
 
@@ -247,6 +265,14 @@ public:
             : layout_(layout),
               pq_divmod(problem_size.P * problem_size.Q),
               q_divmod(problem_size.Q) {
+        N = problem_size.N;
+        H = problem_size.H;
+        W = problem_size.W;
+        C = problem_size.C;
+        pad_h = problem_size.pad_h;
+        pad_w = problem_size.pad_w;
+        stride_h = problem_size.stride_h;
+        stride_w = problem_size.stride_w;
         // Host Init
         pack_pad_ = detail::prepare_pack_pad<Element, ExtraParam>(extra_param);
     }
@@ -279,6 +305,12 @@ public:
     using LongIndex = typename Layout::LongIndex;
     using ConvProblemSize = typename conv::Conv2dProblemSize;
 
+    /// Logical layout
+    using LogicalLayout = layout::RowMajor;
+
+    /// Logical tensor coord
+    using LogicalCoord = typename LogicalLayout::TensorCoord;
+
     /// Fragment object to be loaded or stored
     using Fragment =
             cutlass::Array<Element, ThreadMap::Iterations::kCount *
@@ -302,7 +334,6 @@ public:
 
 private:
     Params const& params_;
-    Conv2dProblemSize const& problem_size_;
 
     Index constant_offset_;
     Index ic_offset_;
@@ -315,10 +346,10 @@ private:
 public:
     CUTLASS_HOST_DEVICE
     Conv2dTileSrcIteratorFpropPrecompNHWC(Params const& params,
-                                          Conv2dProblemSize const& problem_size,
-                                          Element const* ptr, int thread_idx,
+                                          Element const* ptr,
+                                          LogicalCoord extent, int thread_idx,
                                           MatrixCoord const& threadblock_offset)
-            : params_(params), problem_size_(problem_size) {
+            : params_(params) {
         layout::PitchLinearCoord thread_coord =
                 ThreadMap::initial_offset(thread_idx);
 
@@ -343,10 +374,8 @@ public:
             params_.q_divmod(offset_p[s], offset_q[s], residual);
 
             TensorCoord coord = TensorCoord(
-                    offset_n[s],
-                    offset_p[s] * problem_size_.stride_h - problem_size_.pad_h,
-                    offset_q[s] * problem_size_.stride_w - problem_size_.pad_w,
-                    0);
+                    offset_n[s], offset_p[s] * params_.stride_h - params_.pad_h,
+                    offset_q[s] * params_.stride_w - params_.pad_w, 0);
 
             pointer_[s] +=
                     params_.layout_(coord) * sizeof_bits<Element>::value / 8;
@@ -355,32 +384,28 @@ public:
         clear_mask();
 
         CUTLASS_PRAGMA_NO_UNROLL
-        for (int r = 0; r < problem_size_.R; ++r) {
+        for (int r = 0; r < params_.R; ++r) {
             CUTLASS_PRAGMA_UNROLL
             for (int s_idx = 0; s_idx < ThreadMap::Iterations::kStrided;
                  ++s_idx) {
-                int r_ = r;
 
-                int h = offset_p[s_idx] * problem_size_.stride_h -
-                        problem_size_.pad_h + r_ * problem_size_.dilation_h;
+                int h = offset_p[s_idx] * params_.stride_h - params_.pad_h + r;
 
-                bool pred = (offset_n[s_idx] < problem_size_.N && h >= 0 &&
-                             h < problem_size_.H);
+                bool pred = (offset_n[s_idx] < params_.N && h >= 0 &&
+                             h < params_.H);
                 masks_[s_idx][0] |= (pred << r);
             }
         }
 
         CUTLASS_PRAGMA_NO_UNROLL
-        for (int s = 0; s < problem_size_.S; ++s) {
+        for (int s = 0; s < params_.S; ++s) {
             CUTLASS_PRAGMA_UNROLL
             for (int s_idx = 0; s_idx < ThreadMap::Iterations::kStrided;
                  ++s_idx) {
-                int s_ = s;
 
-                int w = offset_q[s_idx] * problem_size_.stride_w -
-                        problem_size_.pad_w + s_ * problem_size_.dilation_w;
+                int w = offset_q[s_idx] * params_.stride_w - params_.pad_w + s;
 
-                bool pred = (w >= 0 && w < problem_size_.W);
+                bool pred = (w >= 0 && w < params_.W);
                 masks_[s_idx][1] |= (pred << s);
             }
         }
@@ -458,11 +483,9 @@ public:
             uint32_t filter_r = precomp_crs.fh;
             uint32_t filter_c = precomp_crs.ic + ic_offset_;
 
-            bool guard_ = (filter_c < problem_size_.C);
+            bool guard_ = (filter_c < params_.C);
 
-            TensorCoord coord =
-                    TensorCoord(0, filter_r * problem_size_.dilation_h,
-                                filter_s * problem_size_.dilation_w, filter_c);
+            TensorCoord coord = TensorCoord(0, filter_r, filter_s, filter_c);
 
             Index stride =
                     params_.layout_(coord) * sizeof_bits<Element>::value / 8;
@@ -492,7 +515,15 @@ public:
     void load(Fragment& frag) { load_with_pointer_offset(frag, 0); }
 
     static Status can_implement(ConvProblemSize& problem_size) {
+        if (problem_size.mode != Mode::kCrossCorrelation) {
+            return Status::kErrorInvalidProblem;
+        }
+
         if (problem_size.R * problem_size.S > Params::kMaxFilterPixels) {
+            return Status::kErrorInvalidProblem;
+        }
+
+        if (problem_size.dilation_h != 1 || problem_size.dilation_w != 1) {
             return Status::kErrorInvalidProblem;
         }
 
@@ -526,6 +557,12 @@ public:
             cutlass::Array<Element, ThreadMap::Iterations::kCount *
                                             ThreadMap::kElementsPerAccess>;
 
+    /// Logical layout
+    using LogicalLayout = layout::RowMajor;
+
+    /// Logical tensor coord
+    using LogicalCoord = typename LogicalLayout::TensorCoord;
+
     //
     // Simplifying assertions
     //
@@ -544,7 +581,6 @@ public:
 
 private:
     Params const& params_;
-    Conv2dProblemSize const& problem_size_;
 
     // current filter position c
     Index ic_offset_;
@@ -562,10 +598,10 @@ private:
 public:
     CUTLASS_HOST_DEVICE
     Conv2dTileSrcIteratorFpropPrecompNHWC(Params const& params,
-                                          Conv2dProblemSize const& problem_size,
-                                          Element const* ptr, int thread_idx,
+                                          Element const* ptr,
+                                          LogicalCoord extent, int thread_idx,
                                           MatrixCoord const& threadblock_offset)
-            : params_(params), problem_size_(problem_size) {
+            : params_(params) {
         layout::PitchLinearCoord thread_coord =
                 ThreadMap::initial_offset(thread_idx);
 
@@ -590,17 +626,15 @@ public:
             params_.q_divmod(offset_p[s], offset_q[s], residual);
 
             TensorCoord coord = TensorCoord(
-                    offset_n[s],
-                    offset_p[s] * problem_size_.stride_h - problem_size_.pad_h,
-                    offset_q[s] * problem_size_.stride_w - problem_size_.pad_w,
-                    0);
+                    offset_n[s], offset_p[s] * params_.stride_h - params_.pad_h,
+                    offset_q[s] * params_.stride_w - params_.pad_w, 0);
 
             pointer_[s] +=
                     params_.layout_(coord) * sizeof_bits<Element>::value / 8;
 
-            uint32_t pred = ((coord.n() < problem_size_.N && coord.h() >= 0 &&
-                              coord.h() < problem_size_.H && coord.w() >= 0 &&
-                              coord.w() < problem_size_.W)
+            uint32_t pred = ((coord.n() < params_.N && coord.h() >= 0 &&
+                              coord.h() < params_.H && coord.w() >= 0 &&
+                              coord.w() < params_.W)
                                      ? 1u
                                      : 0);
             predicates_ |= (pred << s);
@@ -662,7 +696,7 @@ public:
         for (int v = 0; v < kAccessesPerVector; ++v) {
             uint32_t cur_c = ic_offset_ + v * kAccessSize;
 
-            bool guard_ = (cur_c < problem_size_.C);
+            bool guard_ = (cur_c < params_.C);
 
             Index stride = cur_c * sizeof_bits<Element>::value / 8;
 
@@ -689,6 +723,18 @@ public:
     void load(Fragment& frag) { load_with_pointer_offset(frag, 0); }
 
     static Status can_implement(ConvProblemSize& problem_size) {
+        if (problem_size.mode != Mode::kCrossCorrelation) {
+            return Status::kErrorInvalidProblem;
+        }
+
+        if (problem_size.R != 1 || problem_size.S != 1) {
+            return Status::kErrorInvalidProblem;
+        }
+
+        if (problem_size.dilation_h != 1 || problem_size.dilation_w != 1) {
+            return Status::kErrorInvalidProblem;
+        }
+
         return Status::kSuccess;
     }
 };
@@ -723,6 +769,12 @@ public:
             cutlass::Array<Element, ThreadMap::Iterations::kCount *
                                             ThreadMap::kElementsPerAccess>;
 
+    /// Logical layout
+    using LogicalLayout = layout::RowMajor;
+
+    /// Logical tensor coord
+    using LogicalCoord = typename LogicalLayout::TensorCoord;
+
     //
     // Simplifying assertions
     //
@@ -739,19 +791,19 @@ public:
     class Params {
     public:
         /// stride of pitch-linear layout (units of Element)
-        int stride_crs_;
+        int stride_crs_, K;
         // Default ctor
         CUTLASS_HOST_DEVICE
-        Params() : stride_crs_(0) {}
+        Params() : stride_crs_(0), K(0) {}
 
         /// Construct the Params object given a pitch-linear tensor's layout
         CUTLASS_HOST_DEVICE
-        Params(Layout const& layout) : stride_crs_(layout.stride()[2]){};
+        Params(Layout const& layout, Conv2dProblemSize const& problem_size)
+                : stride_crs_(layout.stride()[2]), K(problem_size.K) {}
     };
 
 private:
     Params const& params_;
-    Conv2dProblemSize const& problem_size_;
 
     // current filter position (c, r, s)
     Index crs_;
@@ -769,10 +821,10 @@ private:
 public:
     CUTLASS_HOST_DEVICE
     Conv2dTileFilterIteratorFpropKCxRSx(Params const& params,
-                                        Conv2dProblemSize const& problem_size,
-                                        Element const* ptr, int thread_idx,
+                                        Element const* ptr, LogicalCoord extent,
+                                        int thread_idx,
                                         MatrixCoord const& threadblock_offset)
-            : params_(params), problem_size_(problem_size), predicates_(0) {
+            : params_(params), predicates_(0) {
         layout::PitchLinearCoord thread_coord =
                 ThreadMap::initial_offset(thread_idx);
 
@@ -785,7 +837,7 @@ public:
             Index offset_k = threadblock_offset.column() +
                              thread_coord.strided() +
                              s * ThreadMap::Delta::kStrided;
-            uint32_t pred = ((offset_k < problem_size_.K) ? 1u : 0);
+            uint32_t pred = ((offset_k < params_.K) ? 1u : 0);
             predicates_ |= (pred << s);
 
             pointer_[s] += offset_k * params_.stride_crs_ *

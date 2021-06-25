@@ -25,7 +25,8 @@
  *
  **************************************************************************************************/
 /**
- * \file test/unit/convolution/device/convolution_s4nchw64_s4chwn64_s4nchw64_tensor_op_s32_sm75_perf.cu
+ * \file
+ * test/unit/convolution/device/convolution_u4nchw64_s4chwn64_s4nchw64_tensor_op_s32_sm75.cu
  *
  * Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
  *
@@ -37,8 +38,6 @@
 /*! \file
     \brief Tests for device-wide GEMM interface
 */
-
-#include <iostream>
 
 #include "cutlass/cutlass.h"
 #include "cutlass/convolution/device/convolution.h"
@@ -54,61 +53,32 @@
 
 #include "testbed.h"
 
-////////////////////////////////////////////////////////////////////////////////
-
-TEST(SM75_Device_Convolution_s4_s4_NC64HW64_tensor_op_mmai8832_perf,
+TEST(SM75_Device_Convolution_u4_s4_NC64HW64_tensor_op_mmai8832_reorderK,
      128x128x128_64x64x128) {
+    using ThreadBlockShape = cutlass::gemm::GemmShape<128, 128, 128>;
+    using WarpShape = cutlass::gemm::GemmShape<64, 64, 128>;
     using ElementOutput = cutlass::int4b_t;
     using ElementAccumulator = int32_t;
+    using ElementBias = int32_t;
     using ElementCompute = float;
-
+    using InstructionShape = cutlass::gemm::GemmShape<8, 8, 32>;
     using Convolution = cutlass::conv::device::Convolution<
-            cutlass::int4b_t, cutlass::layout::TensorNCxHWx<64>, cutlass::int4b_t,
-            cutlass::layout::TensorCxRSKx<64>, ElementOutput,
-            cutlass::layout::TensorNCxHWx<64>, int32_t,
-            cutlass::layout::TensorNCxHWx<64>, int32_t,
-            cutlass::conv::ConvType::kConvolution,
-            cutlass::arch::OpClassTensorOp, cutlass::arch::Sm75,
-            cutlass::gemm::GemmShape<128, 128, 128>,
-            cutlass::gemm::GemmShape<64, 64, 128>,
-            cutlass::gemm::GemmShape<8, 8, 32>,
-            cutlass::epilogue::thread::BiasAddLinearCombinationClamp<
-                    ElementOutput, 16, ElementAccumulator, int32_t,
-                    ElementCompute>,
-            cutlass::conv::threadblock::
-                    ConvolutionFpropNCxHWxThreadblockSwizzle,
-            2, 32, 32>;
-
-    EXPECT_TRUE(test::convolution::device::TestConvolutionPerf<Convolution>(
-            100, 64, true));
-}
-
-TEST(SM75_Device_Convolution_s4_s4_NC64HW64_tensor_op_mmai8832_reorderK_perf,
-     128x128x128_64x64x128) {
-    using ElementOutput = cutlass::int4b_t;
-    using ElementAccumulator = int32_t;
-    using ElementCompute = float;
-
-    using Convolution = cutlass::conv::device::Convolution<
-            cutlass::int4b_t, cutlass::layout::TensorNCxHWx<64>,
+            cutlass::uint4b_t, cutlass::layout::TensorNCxHWx<64>,
             cutlass::int4b_t, cutlass::layout::TensorCxRSKx<64>, ElementOutput,
-            cutlass::layout::TensorNCxHWx<64>, int32_t,
-            cutlass::layout::TensorNCxHWx<64>, int32_t,
+            cutlass::layout::TensorNCxHWx<64>, ElementBias,
+            cutlass::layout::TensorNCxHWx<64>, ElementAccumulator,
             cutlass::conv::ConvType::kConvolution,
             cutlass::arch::OpClassTensorOp, cutlass::arch::Sm75,
-            cutlass::gemm::GemmShape<128, 128, 128>,
-            cutlass::gemm::GemmShape<64, 64, 128>,
-            cutlass::gemm::GemmShape<8, 8, 32>,
+            ThreadBlockShape, WarpShape, InstructionShape,
             cutlass::epilogue::thread::BiasAddLinearCombinationClamp<
-                    ElementOutput, 16, ElementAccumulator, int32_t,
+                    ElementOutput, 16, ElementAccumulator, ElementBias,
                     ElementCompute>,
-            cutlass::conv::threadblock::
-                    ConvolutionFpropTransThreadblockSwizzle,
+            cutlass::conv::threadblock::ConvolutionFpropTransThreadblockSwizzle,
             2, 32, 32, true, cutlass::arch::OpMultiplyAddSaturate,
             cutlass::conv::ImplicitGemmMode::GEMM_TN, true>;
-
     EXPECT_TRUE(
             (test::convolution::device::TestConvolutionPerf<Convolution, true>(
                     100, 256, true, false)));
 }
+
 ////////////////////////////////////////////////////////////////////////////////

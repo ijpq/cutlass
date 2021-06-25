@@ -80,7 +80,35 @@ TEST(SM75_Device_Convolution_s8_s8_NC32HW32_tensor_op_mmai8816_perf,
             2, 16, 16>;
 
     EXPECT_TRUE(test::convolution::device::TestConvolutionPerf<Convolution>(
-            1000, 256, true));
+            1000, 256, true, false));
+}
+
+TEST(SM75_Device_Convolution_s8_s8_NC32HW32_tensor_op_mmai8816_reorderK_perf,
+     128x256x64_64x64x64) {
+    using ElementOutput = int8_t;
+    using ElementAccumulator = int32_t;
+    using ElementCompute = float;
+
+    using Convolution = cutlass::conv::device::Convolution<
+            int8_t, cutlass::layout::TensorNCxHWx<32>, int8_t,
+            cutlass::layout::TensorCxRSKx<32>, ElementOutput,
+            cutlass::layout::TensorNCxHWx<32>, int32_t,
+            cutlass::layout::TensorNCxHWx<32>, int32_t,
+            cutlass::conv::ConvType::kConvolution,
+            cutlass::arch::OpClassTensorOp, cutlass::arch::Sm75,
+            cutlass::gemm::GemmShape<128, 256, 64>,
+            cutlass::gemm::GemmShape<64, 64, 64>,
+            cutlass::gemm::GemmShape<8, 8, 16>,
+            cutlass::epilogue::thread::BiasAddLinearCombinationClamp<
+                    ElementOutput, 8, ElementAccumulator, int32_t,
+                    ElementCompute>,
+            cutlass::conv::threadblock::ConvolutionFpropTransThreadblockSwizzle,
+            2, 16, 16, true, cutlass::arch::OpMultiplyAddSaturate,
+            cutlass::conv::ImplicitGemmMode::GEMM_TN, true>;
+
+    EXPECT_TRUE(
+            (test::convolution::device::TestConvolutionPerf<Convolution, true>(
+                    1000, 256, true, false)));
 }
 
 TEST(SM75_Device_Convolution1x1_s8_s8_NC32HW32_tensor_op_mmai8816_perf,
@@ -107,7 +135,90 @@ TEST(SM75_Device_Convolution1x1_s8_s8_NC32HW32_tensor_op_mmai8816_perf,
             2, 16, 16, false>;
 
     EXPECT_TRUE(test::convolution::device::TestConvolution1x1Perf<Convolution>(
-            1000, 256, true));
+            1000, 256, true, false));
+}
+
+TEST(SM75_Device_Convolution1x1_s8_s8_NC32HW32_tensor_op_mmai8816_reorderK_perf,
+     128x128x64_64x64x64) {
+    using ElementOutput = int8_t;
+    using ElementAccumulator = int32_t;
+    using ElementCompute = float;
+
+    using Convolution = cutlass::conv::device::Convolution<
+            int8_t, cutlass::layout::TensorNCxHWx<32>, int8_t,
+            cutlass::layout::TensorCxRSKx<32>, ElementOutput,
+            cutlass::layout::TensorNCxHWx<32>, int32_t,
+            cutlass::layout::TensorNCxHWx<32>, int32_t,
+            cutlass::conv::ConvType::kConvolution,
+            cutlass::arch::OpClassTensorOp, cutlass::arch::Sm75,
+            cutlass::gemm::GemmShape<128, 128, 64>,
+            cutlass::gemm::GemmShape<64, 64, 64>,
+            cutlass::gemm::GemmShape<8, 8, 16>,
+            cutlass::epilogue::thread::BiasAddLinearCombinationClamp<
+                    ElementOutput, 8, ElementAccumulator, int32_t,
+                    ElementCompute>,
+            cutlass::conv::threadblock::ConvolutionFpropTransThreadblockSwizzle,
+            2, 16, 16, false, cutlass::arch::OpMultiplyAddSaturate,
+            cutlass::conv::ImplicitGemmMode::GEMM_TN, true>;
+
+    EXPECT_TRUE((test::convolution::device::TestConvolution1x1Perf<Convolution,
+                                                                   true>(
+            1000, 256, true, false)));
+}
+
+TEST(SM75_Device_Convolution_s8_s8_NC32HW32_tensor_op_mmai8816_perf,
+     32x128x32_32x64x32) {
+    using ElementOutput = int8_t;
+    using ElementAccumulator = int32_t;
+    using ElementCompute = float;
+
+    using Convolution = cutlass::conv::device::Convolution<
+            int8_t, cutlass::layout::TensorNCxHWx<32>, int8_t,
+            cutlass::layout::TensorCxRSKx<32>, ElementOutput,
+            cutlass::layout::TensorNCxHWx<32>, int32_t,
+            cutlass::layout::TensorNCxHWx<32>, int32_t,
+            cutlass::conv::ConvType::kConvolution,
+            cutlass::arch::OpClassTensorOp, cutlass::arch::Sm75,
+            cutlass::gemm::GemmShape<32, 128, 32>,
+            cutlass::gemm::GemmShape<32, 64, 32>,
+            cutlass::gemm::GemmShape<8, 8, 16>,
+            cutlass::epilogue::thread::BiasAddLinearCombinationClamp<
+                    ElementOutput, 8, ElementAccumulator, int32_t,
+                    ElementCompute>,
+            cutlass::conv::threadblock::
+                    ConvolutionFpropNCxHWxThreadblockSwizzle,
+            1, 16, 16, true>;
+
+    EXPECT_TRUE(test::convolution::device::TestDetectionPerf<Convolution>(
+            1000, 16, true, false));
+}
+
+TEST(SM75_Device_Convolution_s8_s8_NC32HW32_tensor_op_mmai8816_reorderK_perf,
+     128x32x32_64x32x32) {
+    using ElementOutput = int8_t;
+    using ElementAccumulator = int32_t;
+    using ElementCompute = float;
+
+    using Convolution = cutlass::conv::device::Convolution<
+            int8_t, cutlass::layout::TensorNCxHWx<32>, int8_t,
+            cutlass::layout::TensorCxRSKx<32>, ElementOutput,
+            cutlass::layout::TensorNCxHWx<32>, int32_t,
+            cutlass::layout::TensorNCxHWx<32>, int32_t,
+            cutlass::conv::ConvType::kConvolution,
+            cutlass::arch::OpClassTensorOp, cutlass::arch::Sm75,
+            cutlass::gemm::GemmShape<128, 32, 32>,
+            cutlass::gemm::GemmShape<64, 32, 32>,
+            cutlass::gemm::GemmShape<8, 8, 16>,
+            cutlass::epilogue::thread::BiasAddLinearCombinationClamp<
+                    ElementOutput, 8, ElementAccumulator, int32_t,
+                    ElementCompute>,
+            cutlass::conv::threadblock::ConvolutionFpropTransThreadblockSwizzle,
+            1, 16, 16, true, cutlass::arch::OpMultiplyAddSaturate,
+            cutlass::conv::ImplicitGemmMode::GEMM_TN, true>;
+
+    EXPECT_TRUE(
+            (test::convolution::device::TestDetectionPerf<Convolution, true>(
+                    1000, 16, true, false)));
 }
 
 ////////////////////////////////////////////////////////////////////////////////

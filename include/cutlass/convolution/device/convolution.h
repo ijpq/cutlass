@@ -122,7 +122,9 @@ template <
                 ElementDst_, ElementAccumulator_>::Operator,
         /// Implicit Gemm Mode
         cutlass::conv::ImplicitGemmMode GemmMode =
-                cutlass::conv::ImplicitGemmMode::GEMM_NT>
+                cutlass::conv::ImplicitGemmMode::GEMM_NT,
+        /// use reorder filter K to avoid shared load
+        bool WithoutSharedLoad = false>
 class Convolution {
 public:
     using ElementSrc = ElementSrc_;
@@ -157,7 +159,7 @@ public:
                     ArchTag, ThreadblockShape, WarpShape, InstructionShape,
                     EpilogueOutputOp, ThreadblockSwizzle, kStages, Operator,
                     kAlignmentSrc, kAlignmentFilter, kNeedLoadFromConstMem,
-                    kGemmMode>::Kernel;
+                    kGemmMode, WithoutSharedLoad>::Kernel;
 
     using TensorRefSrc = typename ConvolutionKernel::TensorRefSrc;
     using TensorRefFilter = typename ConvolutionKernel::TensorRefFilter;

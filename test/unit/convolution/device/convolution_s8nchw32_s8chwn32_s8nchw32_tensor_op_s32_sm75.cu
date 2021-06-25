@@ -123,4 +123,36 @@ TEST(SM75_Device_Convolution_s8_s8_NC32HW32_tensor_op_mmai8816,
     RUN_CONVOLUTION;
 }
 
+#define RUN_CONVOLUTION_REORDERK                                           \
+    do {                                                                   \
+        using ElementOutput = int8_t;                                      \
+        using ElementAccumulator = int32_t;                                \
+        using ElementBias = int32_t;                                       \
+        using ElementCompute = float;                                      \
+        using InstructionShape = cutlass::gemm::GemmShape<8, 8, 16>;       \
+        using Convolution = cutlass::conv::device::Convolution<            \
+                int8_t, cutlass::layout::TensorNCxHWx<32>, int8_t,         \
+                cutlass::layout::TensorCxRSKx<32>, ElementOutput,          \
+                cutlass::layout::TensorNCxHWx<32>, int32_t,                \
+                cutlass::layout::TensorNCxHWx<32>, int32_t,                \
+                cutlass::conv::ConvType::kConvolution,                     \
+                cutlass::arch::OpClassTensorOp, cutlass::arch::Sm75,       \
+                ThreadBlockShape, WarpShape, InstructionShape,             \
+                cutlass::epilogue::thread::BiasAddLinearCombinationClamp<  \
+                        ElementOutput, 8, ElementAccumulator, ElementBias, \
+                        ElementCompute>,                                   \
+                cutlass::conv::threadblock::                               \
+                        ConvolutionFpropTransThreadblockSwizzle,           \
+                2, 16, 16, true, cutlass::arch::OpMultiplyAddSaturate,     \
+                cutlass::conv::ImplicitGemmMode::GEMM_TN, true>;           \
+        EXPECT_TRUE(test::convolution::device::TestConvolutionMmaReorderK< \
+                    Convolution>());                                       \
+    } while (0)
+
+TEST(SM75_Device_Convolution_s8_s8_NC32HW32_tensor_op_mmai8816_reorderK,
+     128x128x64_64x64x64) {
+    using ThreadBlockShape = cutlass::gemm::GemmShape<128, 128, 64>;
+    using WarpShape = cutlass::gemm::GemmShape<64, 64, 64>;
+    RUN_CONVOLUTION_REORDERK;
+}
 ////////////////////////////////////////////////////////////////////////////////

@@ -83,8 +83,8 @@ template <typename Shape_,            ///< Threadblock-level tile size (concept:
           typename LayoutBias_,       ///< Layout type for bias tensor
           typename WarpMmaTensorOp_,  ///< Warp-level mma operator
           typename OutputOp_,         ///< Thread-level epilogue operator
-          int ElementsPerAccess       ///< Elements per access
-          >
+          int ElementsPerAccess,      ///< Elements per access
+          bool WithoutSharedLoad = false>
 struct ConvolutionEpilogueTensorOp;
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -93,7 +93,7 @@ template <typename Shape_, typename WarpMmaTensorOp_, typename OutputOp_,
           int ElementsPerAccess>
 struct ConvolutionEpilogueTensorOp<Shape_, layout::TensorNHWC,
                                    layout::TensorNHWC, WarpMmaTensorOp_,
-                                   OutputOp_, ElementsPerAccess> {
+                                   OutputOp_, ElementsPerAccess, false> {
     using Shape = Shape_;
     using WarpMmaTensorOp = WarpMmaTensorOp_;
     static const int kPartitionsK = Shape::kK / WarpMmaTensorOp::Shape::kK;
@@ -159,7 +159,7 @@ template <typename Shape_, typename WarpMmaTensorOp_, typename OutputOp_,
 struct ConvolutionEpilogueTensorOp<Shape_, layout::TensorNCxHWx<Interleaved>,
                                    layout::TensorNCxHWx<Interleaved>,
                                    WarpMmaTensorOp_, OutputOp_,
-                                   ElementsPerAccess> {
+                                   ElementsPerAccess, false> {
     using Shape = Shape_;
     using WarpMmaTensorOp = WarpMmaTensorOp_;
     using OutputOp = OutputOp_;
@@ -222,6 +222,112 @@ struct ConvolutionEpilogueTensorOp<Shape_, layout::TensorNCxHWx<Interleaved>,
             Shape, LayoutDst, kPartitionsK, WarpMmaTensorOp, OutputTileIterator,
             AccumulatorFragmentIterator, WarpTileIterator, SharedLoadIterator,
             BiasTileIterator, OutputOp, Padding, true>;
+};
+
+template <typename Shape_, typename WarpMmaTensorOp_, typename OutputOp_,
+          int ElementsPerAccess>
+struct ConvolutionEpilogueTensorOp<Shape_, layout::TensorNHWC,
+                                   layout::TensorNHWC, WarpMmaTensorOp_,
+                                   OutputOp_, ElementsPerAccess, true> {
+    using Shape = Shape_;
+    using WarpMmaTensorOp = WarpMmaTensorOp_;
+    static const int kPartitionsK = Shape::kK / WarpMmaTensorOp::Shape::kK;
+    using OutputOp = OutputOp_;
+    static int const kElementsPerAccess = ElementsPerAccess;
+    using ElementOutput = typename OutputOp::ElementOutput;
+    using LayoutDst = layout::TensorNHWC;
+    using ElementBias = typename OutputOp::ElementBias;
+    using LayoutBias = layout::TensorNHWC;
+    using ElementAccumulator = typename WarpMmaTensorOp::ElementC;
+
+    //
+    // Thread map
+    //
+
+    using OutputTileThreadMap =
+            typename cutlass::epilogue::threadblock::DefaultThreadMapTensorOp<
+                    Shape, typename WarpMmaTensorOp::Shape, kPartitionsK,
+                    ElementOutput, kElementsPerAccess>::Type;
+
+    using OutputTileIterator =
+            cutlass::epilogue::threadblock::PredicatedTileIterator<
+                    OutputTileThreadMap, ElementOutput>;
+
+    using AccumulatorFragmentIterator =
+            cutlass::epilogue::warp::FragmentIteratorTensorOp<
+                    typename WarpMmaTensorOp::Shape,
+                    typename WarpMmaTensorOp::Policy::Operator::Shape,
+                    typename WarpMmaTensorOp::Policy::Operator::ElementC,
+                    typename WarpMmaTensorOp::Policy::Operator::FragmentC,
+                    typename WarpMmaTensorOp::LayoutC>;
+    using BiasTileIterator = cutlass::epilogue::threadblock::
+            PerChannelBiasPredicatedTileIteratorTensorOp<
+                    OutputTileThreadMap, LayoutBias, ElementBias,
+                    OutputTileThreadMap::kElementsPerAccess, false>;
+
+    //
+    // Define the epilogue
+    //
+    using Epilogue = cutlass::epilogue::threadblock::
+            ConvolutionEpilogueWithoutSharedLoad<
+                    Shape, LayoutDst, kPartitionsK, WarpMmaTensorOp,
+                    OutputTileIterator, AccumulatorFragmentIterator,
+                    BiasTileIterator, OutputOp>;
+};
+
+template <typename Shape_, typename WarpMmaTensorOp_, typename OutputOp_,
+          int Interleaved, int ElementsPerAccess>
+struct ConvolutionEpilogueTensorOp<Shape_, layout::TensorNCxHWx<Interleaved>,
+                                   layout::TensorNCxHWx<Interleaved>,
+                                   WarpMmaTensorOp_, OutputOp_,
+                                   ElementsPerAccess, true> {
+    using Shape = Shape_;
+    using WarpMmaTensorOp = WarpMmaTensorOp_;
+    using OutputOp = OutputOp_;
+    static int const kElementsPerAccess = ElementsPerAccess;
+    static const int kPartitionsK = Shape::kK / WarpMmaTensorOp::Shape::kK;
+    static int const kInterleaved = Interleaved;
+
+    using ElementOutput = typename OutputOp::ElementOutput;
+    using LayoutDst = layout::TensorNCxHWx<kInterleaved>;
+    using ElementBias = typename OutputOp::ElementBias;
+    using LayoutBias = layout::TensorNCxHWx<kInterleaved>;
+    using ElementAccumulator = typename WarpMmaTensorOp::ElementC;
+
+    //
+    // Thread map
+    //
+    using OutputTileThreadMap = typename cutlass::epilogue::threadblock::
+            InterleavedConvolutionThreadMapTensorOp<
+                    Shape, typename WarpMmaTensorOp::Shape, kPartitionsK,
+                    ElementOutput, kElementsPerAccess, kInterleaved>::Type;
+
+    using OutputTileIterator = cutlass::epilogue::threadblock::
+            InterleavedConvPredicatedTileIterator<OutputTileThreadMap,
+                                                  ElementOutput, kInterleaved>;
+
+    using AccumulatorFragmentIterator =
+            cutlass::epilogue::warp::FragmentIteratorTensorOp<
+                    typename WarpMmaTensorOp::Shape,
+                    typename WarpMmaTensorOp::Policy::Operator::Shape,
+                    typename WarpMmaTensorOp::Policy::Operator::ElementC,
+                    typename WarpMmaTensorOp::Policy::Operator::FragmentC,
+                    // can reuse the gemm version here to do element selection
+                    layout::ColumnMajorInterleaved<kInterleaved>>;
+
+    using BiasTileIterator = cutlass::epilogue::threadblock::
+            PerChannelBiasPredicatedTileIteratorTensorOp<
+                    OutputTileThreadMap, LayoutBias, ElementBias,
+                    OutputTileThreadMap::kElementsPerAccess, false>;
+
+    //
+    // Define the epilogue
+    //
+    using Epilogue = cutlass::epilogue::threadblock::
+            ConvolutionEpilogueWithoutSharedLoad<
+                    Shape, LayoutDst, kPartitionsK, WarpMmaTensorOp,
+                    OutputTileIterator, AccumulatorFragmentIterator,
+                    BiasTileIterator, OutputOp>;
 };
 
 /////////////////////////////////////////////////////////////////////////////////////////////////

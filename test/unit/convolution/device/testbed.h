@@ -55,6 +55,37 @@
 #include "cutlass/util/reference/host/tensor_fill.h"
 #include "cutlass/util/reference/host/tensor_norm.h"
 #include "cutlass/util/tensor_view_io.h"
+#include "cutlass/tensor_view.h"
+#include "cutlass/util/host_reorder.h"
+
+namespace cutlass {
+template <typename Element, typename Layout, int Interleaved>
+void reorder_row(TensorRef<Element, Layout> dest,
+                 TensorRef<Element, Layout> src, int rows, int cols) {
+    TensorRef<Element, layout::RowMajor> mappedDest(dest.data(), cols);
+    TensorRef<Element, layout::RowMajor> mappedSrc(src.data(), cols);
+
+    const int InstructionShapeCol = 8;
+    // 4 threads per Quad
+    const int ElementsPerThread = InstructionShapeCol / 4;
+    // 4 threads per Quad
+    const int ReorderedElementsPerThread = Interleaved / 4;
+
+    for (int k = 0; k < rows; k++) {
+        for (int n = 0; n < cols; n++) {
+            mappedDest.at(
+                    {(k / Interleaved) * Interleaved +
+                             ((k % ReorderedElementsPerThread) /
+                              ElementsPerThread) *
+                                     InstructionShapeCol +
+                             ((k % Interleaved) / ReorderedElementsPerThread) *
+                                     ElementsPerThread +
+                             (k % ElementsPerThread),
+                     n}) = mappedSrc.at({k, n});
+        }
+    }
+}
+};  // namespace cutlass
 
 namespace test {
 namespace convolution {
@@ -113,11 +144,13 @@ public:
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
-template <typename Convolution>
+template <typename Convolution, bool ReorderK = false>
 struct Testbed {
     using ElementAccumulator = typename Convolution::ElementAccumulator;
     using ElementCompute = typename Convolution::ConvolutionKernel::Epilogue::
             OutputOp::ElementCompute;
+
+    static bool const kReorderK = ReorderK;
 
     /// Initialization
     cutlass::Distribution::Kind init_src;
@@ -135,6 +168,9 @@ struct Testbed {
     cutlass::HostTensor<typename Convolution::ElementBias,
                         typename Convolution::LayoutBias>
             tensor_bias;
+    cutlass::HostTensor<typename Convolution::ElementFilter,
+                        typename Convolution::LayoutFilter>
+            tensor_filter_reordered;
     cutlass::HostTensor<typename Convolution::ElementDst,
                         typename Convolution::LayoutDst>
             tensor_z;
@@ -248,6 +284,56 @@ struct Testbed {
         tensor_bias.sync_device();
         tensor_z.sync_device();
         tensor_dst.sync_device();
+
+        if (kReorderK) {
+            tensor_filter_reordered.resize(
+                    typename Convolution::LayoutFilter::TensorCoord{
+                            conv_param.K, conv_param.R, conv_param.S,
+                            conv_param.C});
+
+            if (cutlass::platform::is_same<
+                        cutlass::layout::TensorNHWC,
+                        typename Convolution::LayoutSrc>::value &&
+                conv_param.K % 32 == 0) {
+                const int kN = Convolution::ThreadblockShape::kN;
+                EXPECT_TRUE(kN == 64 || kN == 32);
+                if (kN == 64) {
+                    cutlass::reorder_row<typename Convolution::ElementFilter,
+                                         typename Convolution::LayoutFilter,
+                                         64>(
+                            tensor_filter_reordered.host_ref(),
+                            tensor_filter.host_ref(), conv_param.K,
+                            conv_param.R * conv_param.S * conv_param.C);
+                } else {
+                    cutlass::reorder_row<typename Convolution::ElementFilter,
+                                         typename Convolution::LayoutFilter,
+                                         32>(
+                            tensor_filter_reordered.host_ref(),
+                            tensor_filter.host_ref(), conv_param.K,
+                            conv_param.R * conv_param.S * conv_param.C);
+                }
+            } else if (cutlass::platform::is_same<
+                               cutlass::layout::TensorNCxHWx<32>,
+                               typename Convolution::LayoutSrc>::value) {
+                cutlass::reorder_convK<32>(
+                        tensor_filter_reordered.host_ref(),
+                        tensor_filter.host_ref(),
+                        implicit_gemm_problem_size(
+                                cutlass::conv::Operator::kFprop, conv_param));
+            } else if (cutlass::platform::is_same<
+                               cutlass::layout::TensorNCxHWx<64>,
+                               typename Convolution::LayoutSrc>::value) {
+                cutlass::reorder_convK<64>(
+                        tensor_filter_reordered.host_ref(),
+                        tensor_filter.host_ref(),
+                        implicit_gemm_problem_size(
+                                cutlass::conv::Operator::kFprop, conv_param));
+            } else {
+                throw std::runtime_error("unsupport reorderK layout");
+            }
+
+            tensor_filter_reordered.sync_device();
+        }
     }
 
     /// Compares computed reference with device reference and outputs to a file
@@ -349,13 +435,19 @@ struct Testbed {
              ElementCompute gamma = ElementCompute(0)) {
         this->initialize(conv_param);
 
+        cutlass::TensorRef<typename Convolution::ElementFilter,
+                           typename Convolution::LayoutFilter>
+                filter_dev_ref =
+                        kReorderK ? tensor_filter_reordered.device_ref()
+                                  : tensor_filter.device_ref();
+
         //
         // Initialize the CONVOLUTION operator
         //
 
         typename Convolution::Arguments arguments{conv_param,
                                                   tensor_src.device_ref(),
-                                                  tensor_filter.device_ref(),
+                                                  filter_dev_ref,
                                                   tensor_bias.device_ref(),
                                                   tensor_z.device_ref(),
                                                   tensor_dst.device_ref(),
@@ -401,13 +493,19 @@ struct Testbed {
               bool verify = false) {
         this->initialize(conv_param);
 
+        cutlass::TensorRef<typename Convolution::ElementFilter,
+                           typename Convolution::LayoutFilter>
+                filter_dev_ref =
+                        kReorderK ? tensor_filter_reordered.device_ref()
+                                  : tensor_filter.device_ref();
+
         //
         // Initialize the CONVOLUTION operator
         //
 
         typename Convolution::Arguments arguments{conv_param,
                                                   tensor_src.device_ref(),
-                                                  tensor_filter.device_ref(),
+                                                  filter_dev_ref,
                                                   tensor_bias.device_ref(),
                                                   tensor_z.device_ref(),
                                                   tensor_dst.device_ref(),
@@ -606,6 +704,84 @@ bool TestConvolutionNHWC() {
     return passed;
 }
 
+template <typename Convolution>
+bool TestConvolutionNHWC_ReorderK() {
+    bool passed = true;
+
+    double problem_alpha[] = {0.019980327};
+
+    double problem_beta[] = {-1.001234567};
+
+    double problem_gamma[] = {0.019990229};
+
+    Testbed<Convolution, true> testbed;
+
+    using ElementCompute =
+            typename Convolution::EpilogueOutputOp::ElementCompute;
+
+    using ConvolutionParameter = cutlass::conv::Conv2dProblemSize;
+    std::vector<ConvolutionParameter> args;
+    cutlass::conv::Mode mode = cutlass::conv::Mode::kCrossCorrelation;
+
+    for (int n : {8, 24, 33}) {
+        for (int ic : {8, 16, 32}) {
+            for (int oc : {32, 64}) {
+                for (int ih : {7}) {
+                    for (int iw : {9}) {
+                        for (int fh : {1, 3, 5}) {
+                            for (int ph : {static_cast<int>(fh / 2), 0}) {
+                                for (int sh : {1, 2}) {
+                                    int oh = (ih + 2 * ph - fh) / sh + 1;
+                                    int ow = (iw + 2 * ph - fh) / sh + 1;
+                                    args.emplace_back(ConvolutionParameter{
+                                            n, ih, iw, ic, oc, fh, fh, oh, ow,
+                                            ph, ph, sh, sh, 1, 1, mode});
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for (auto arg : args) {
+        for (auto alpha : problem_alpha) {
+            for (auto beta : problem_beta) {
+                for (auto gamma : problem_gamma) {
+                    if (arg.K % Convolution::ThreadblockShape::kN != 0)
+                        continue;
+                    if (cutlass::platform::is_same<
+                                cutlass::layout::TensorNCxHWx<8>,
+                                typename Convolution::LayoutFilter>::value &&
+                        (arg.C % 8 != 0))
+                        continue;
+                    else if (cutlass::platform::is_same<
+                                     cutlass::layout::TensorNCxHWx<16>,
+                                     typename Convolution::LayoutFilter>::
+                                     value &&
+                             (arg.C % 16 != 0))
+                        continue;
+                    else if (cutlass::platform::is_same<
+                                     cutlass::layout::TensorNCxHWx<32>,
+                                     typename Convolution::LayoutFilter>::
+                                     value &&
+                             (arg.C % 32 != 0))
+                        continue;
+                    passed = testbed.run(
+                            arg, cutlass::from_real<ElementCompute>(alpha),
+                            cutlass::from_real<ElementCompute>(beta),
+                            cutlass::from_real<ElementCompute>(gamma));
+                    if (!passed) {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    return passed;
+}
+
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
 template <typename Convolution>
@@ -668,18 +844,78 @@ bool TestConvolutionMma(int interleaved = 32) {
     return passed;
 }
 
+template <typename Convolution>
+bool TestConvolutionMmaReorderK(int interleaved = 32) {
+    bool passed = true;
+
+    double problem_alpha[] = {1.0};
+
+    double problem_beta[] = {-1.3141413421};
+
+    double problem_gamma[] = {1.0};
+
+    Testbed<Convolution, true> testbed;
+
+    using ElementCompute =
+            typename Convolution::EpilogueOutputOp::ElementCompute;
+
+    using ConvolutionParameter = cutlass::conv::Conv2dProblemSize;
+    std::vector<ConvolutionParameter> args;
+    cutlass::conv::Mode mode = cutlass::conv::Mode::kCrossCorrelation;
+
+    for (int n : {128, 48, 33}) {
+        for (int ic : {2, 3}) {      // times interleaved
+            for (int oc : {4, 3}) {  // times interleaved
+                for (int ih : {8}) {
+                    for (int iw : {8}) {
+                        for (int fh : {3, 5, 7}) {
+                            for (int ph : {fh / 2, 0}) {
+                                for (int sh : {1, 2}) {
+                                    int oh = (ih + 2 * ph - fh) / sh + 1;
+                                    int ow = (iw + 2 * ph - fh) / sh + 1;
+                                    args.emplace_back(ConvolutionParameter{
+                                            n, ih, iw, ic * interleaved,
+                                            oc * interleaved, fh, fh, oh, ow,
+                                            ph, ph, sh, sh, 1, 1, mode});
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for (auto arg : args) {
+        for (auto alpha : problem_alpha) {
+            for (auto beta : problem_beta) {
+                for (auto gamma : problem_gamma) {
+                    passed = testbed.run(
+                            arg, cutlass::from_real<ElementCompute>(alpha),
+                            cutlass::from_real<ElementCompute>(beta),
+                            cutlass::from_real<ElementCompute>(gamma));
+                    if (!passed) {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    return passed;
+}
+
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
-template <typename Convolution>
+template <typename Convolution, bool ReorderK = false>
 bool TestConvolutionPerf(int iterations = 1, int batch = 64,
-                         bool tensor_op = false) {
+                         bool tensor_op = false, bool do_verify = true) {
     bool passed = true;
 
     double problem_alpha[] = {0.01234567};
     double problem_beta[] = {-1.07654321};
     double problem_gamma[] = {0.0};
 
-    Testbed<Convolution> testbed;
+    Testbed<Convolution, ReorderK> testbed;
 
     using ElementCompute =
             typename Convolution::EpilogueOutputOp::ElementCompute;
@@ -746,7 +982,7 @@ bool TestConvolutionPerf(int iterations = 1, int batch = 64,
     args.emplace_back(ConvolutionParameter{batch, 7, 7, 512, 512, 3, 3, 7, 7, 1,
                                            1, 1, 1, 1, 1, mode});
 
-    bool verify = true;
+    bool verify = do_verify;
     int cnt = 0;
     for (auto arg : args) {
         for (auto alpha : problem_alpha) {
@@ -774,16 +1010,16 @@ bool TestConvolutionPerf(int iterations = 1, int batch = 64,
     return passed;
 }
 
-template <typename Convolution>
+template <typename Convolution, bool ReorderK = false>
 bool TestConvolution1x1Perf(int iterations = 1, int batch = 64,
-                            bool tensor_op = false) {
+                            bool tensor_op = false, bool do_verify = true) {
     bool passed = true;
 
     double problem_alpha[] = {1.0};
     double problem_beta[] = {-1.0};
     double problem_gamma[] = {0.0};
 
-    Testbed<Convolution> testbed;
+    Testbed<Convolution, ReorderK> testbed;
 
     using ElementCompute =
             typename Convolution::EpilogueOutputOp::ElementCompute;
@@ -821,7 +1057,7 @@ bool TestConvolution1x1Perf(int iterations = 1, int batch = 64,
     args.emplace_back(ConvolutionParameter{batch, 7, 7, 512, 2048, 1, 1, 7, 7,
                                            0, 0, 1, 1, 1, 1, mode});
 
-    bool verify = true;
+    bool verify = do_verify;
     int cnt = 0;
     for (auto arg : args) {
         for (auto alpha : problem_alpha) {
@@ -849,16 +1085,16 @@ bool TestConvolution1x1Perf(int iterations = 1, int batch = 64,
     return passed;
 }
 
-template <typename Convolution>
+template <typename Convolution, bool ReorderK = false>
 bool TestDetectionPerf(int iterations = 1, int batch = 16,
-                       bool tensor_op = false) {
+                       bool tensor_op = false, bool do_verify = true) {
     bool passed = true;
 
     double problem_alpha[] = {1.0};
     double problem_beta[] = {-1.0};
     double problem_gamma[] = {0.0};
 
-    Testbed<Convolution> testbed;
+    Testbed<Convolution, ReorderK> testbed;
 
     using ElementCompute =
             typename Convolution::EpilogueOutputOp::ElementCompute;
@@ -873,7 +1109,17 @@ bool TestDetectionPerf(int iterations = 1, int batch = 16,
                                            1, 1, 1, 1, 1, 1, mode});
     args.emplace_back(ConvolutionParameter{batch, 46, 80, 16, 16, 3, 3, 46, 80,
                                            1, 1, 1, 1, 1, 1, mode});
-    bool verify = true;
+
+    args.emplace_back(ConvolutionParameter{batch, 184, 320, 32, 32, 1, 1, 184,
+                                           320, 1, 1, 1, 1, 1, 1, mode});
+    args.emplace_back(ConvolutionParameter{batch, 184, 320, 32, 64, 1, 1, 92,
+                                           160, 1, 1, 2, 2, 1, 1, mode});
+    args.emplace_back(ConvolutionParameter{batch, 184, 320, 32, 32, 3, 3, 184,
+                                           320, 1, 1, 1, 1, 1, 1, mode});
+    args.emplace_back(ConvolutionParameter{batch, 184, 320, 32, 64, 3, 3, 92,
+                                           160, 1, 1, 2, 2, 1, 1, mode});
+
+    bool verify = do_verify;
     int cnt = 0;
     for (auto arg : args) {
         for (auto alpha : problem_alpha) {
@@ -901,16 +1147,16 @@ bool TestDetectionPerf(int iterations = 1, int batch = 16,
     return passed;
 }
 
-template <typename Convolution>
+template <typename Convolution, bool ReorderK = false>
 bool BenchFirstConvolution(int iterations = 1, int batch = 16,
-                           bool tensor_op = false) {
+                           bool tensor_op = false, bool do_verify = true) {
     bool passed = true;
 
     double problem_alpha[] = {1.0};
     double problem_beta[] = {-1.0};
     double problem_gamma[] = {0.0};
 
-    Testbed<Convolution> testbed;
+    Testbed<Convolution, ReorderK> testbed;
 
     using ElementCompute =
             typename Convolution::EpilogueOutputOp::ElementCompute;
@@ -924,7 +1170,7 @@ bool BenchFirstConvolution(int iterations = 1, int batch = 16,
     args.emplace_back(ConvolutionParameter{batch, 768, 1280, 4, 16, 3, 3, 384,
                                            640, 1, 1, 2, 2, 1, 1, mode});
 
-    bool verify = true;
+    bool verify = do_verify;
     int cnt = 0;
     for (auto arg : args) {
         for (auto alpha : problem_alpha) {

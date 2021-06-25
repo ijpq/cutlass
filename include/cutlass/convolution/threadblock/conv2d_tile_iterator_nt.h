@@ -81,12 +81,14 @@ namespace threadblock {
 ///
 template <typename Shape_, typename Element_, typename Layout_,
           int InterleavedK, typename ThreadMap_, int AccessSize,
-          typename TileMap_>
+          typename TileMap_,
+          ImplicitGemmMode GemmMode = ImplicitGemmMode::GEMM_NT>
 class Conv2dTileIterator {
 public:
     using Shape = Shape_;
     using Element = Element_;
     static int const kInterleavedK = InterleavedK;
+    static ImplicitGemmMode const kGemmMode = GemmMode;
     using Layout = Layout_;
     using ThreadMap = ThreadMap_;
     using TileMap = TileMap_;
@@ -173,14 +175,26 @@ public:
             /// Initial offset of threadblock
             LogicalCoord const& threadblock_offset)
             : params_(params),
-              iterator_(
-                      params.params_, pointer,
-                      layout::PitchLinearCoord(extent.row() * kInterleavedK,
-                                               extent.column() / kInterleavedK),
-                      thread_id,
-                      layout::PitchLinearCoord(
-                              threadblock_offset.row() * kInterleavedK,
-                              threadblock_offset.column() / kInterleavedK)) {}
+              iterator_(params.params_, pointer,
+                        (kGemmMode == ImplicitGemmMode::GEMM_NT)
+                                ? layout::PitchLinearCoord(
+                                          extent.row() * kInterleavedK,
+                                          extent.column() / kInterleavedK)
+                                : layout::PitchLinearCoord(
+                                          extent.column() * kInterleavedK,
+                                          extent.row() / kInterleavedK),
+                        thread_id,
+                        (kGemmMode == ImplicitGemmMode::GEMM_NT)
+                                ? layout::PitchLinearCoord(
+                                          threadblock_offset.row() *
+                                                  kInterleavedK,
+                                          threadblock_offset.column() /
+                                                  kInterleavedK)
+                                : layout::PitchLinearCoord(
+                                          threadblock_offset.column() *
+                                                  kInterleavedK,
+                                          threadblock_offset.row() /
+                                                  kInterleavedK)) {}
 
     /// Construct a Conv2dTileIterator with zero threadblock offset
     CUTLASS_HOST_DEVICE

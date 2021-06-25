@@ -368,6 +368,10 @@ public:
     CUTLASS_DEVICE
     void store(Fragment const& frag) { store_with_byte_offset(frag, 0); }
 
+    /// Overrides the internal iteration index
+    CUTLASS_HOST_DEVICE
+    void set_iteration_index(int iteration) {}
+
     /// Advances to the next position to load or store
     CUTLASS_HOST_DEVICE
     TensorPredicatedTileIteratorTensorOp& operator++() {

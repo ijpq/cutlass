@@ -57,6 +57,7 @@
 #include "cutlass/gemm/threadblock/default_mma.h"
 #include "cutlass/gemm/threadblock/threadblock_swizzle.h"
 
+#include "cutlass/convolution/threadblock/conv2d_tile_params.h"
 #include "cutlass/convolution/threadblock/implicit_mma_pipelined.h"
 #include "cutlass/convolution/threadblock/implicit_mma_singlestage.h"
 #include "cutlass/convolution/threadblock/implicit_mma_nt_precomp.h"
@@ -111,6 +112,8 @@ template <
         /// Store the accumulators in row major or column major.  Row major is
         /// used when output layout is interleaved.
         bool AccumulatorsInRowMajor = false,
+        /// Implicit Gemm Mode
+        ImplicitGemmMode GemmMode = ImplicitGemmMode::GEMM_NT,
         /// Cache operation of operand A
         cutlass::arch::CacheOperation::Kind CacheOpSrc =
                 cutlass::arch::CacheOperation::Global,

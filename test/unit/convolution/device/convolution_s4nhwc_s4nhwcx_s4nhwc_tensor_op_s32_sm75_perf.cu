@@ -55,24 +55,26 @@
 
 #include "testbed.h"
 
-#define DEF_CONVOLUTION(AccessSize, Stages)                                  \
-    using Convolution_##Stages = cutlass::conv::device::Convolution<         \
-            cutlass::int4b_t, cutlass::layout::TensorNHWC, cutlass::int4b_t, \
-            cutlass::layout::TensorNCxHWx<AccessSize>, ElementOutput,        \
-            cutlass::layout::TensorNHWC, ElementBias,                        \
-            cutlass::layout::TensorNHWC, ElementAccumulator,                 \
-            cutlass::conv::ConvType::kConvolution,                           \
-            cutlass::arch::OpClassTensorOp, cutlass::arch::Sm75,             \
-            ThreadBlockShape, WarpShape, InstructionShape,                   \
-            cutlass::epilogue::thread::BiasAddLinearCombinationClamp<        \
-                    ElementOutput,                                           \
-                    32 / cutlass::sizeof_bits<ElementOutput>::value,         \
-                    ElementAccumulator, ElementBias, ElementCompute>,        \
-            cutlass::conv::threadblock::                                     \
-                    ConvolutionFpropNHWCThreadblockSwizzle,                  \
-            Stages, AccessSize, AccessSize, true,                            \
-            cutlass::arch::OpMultiplyAddSaturate,                            \
-            cutlass::conv::ImplicitGemmMode::GEMM_TN>
+#define DEF_CONVOLUTION(AccessSize, Stages, OutputNum, WithoutSharedLoad)     \
+    using Convolution_##Stages##_##WithoutSharedLoad =                        \
+            cutlass::conv::device::Convolution<                               \
+                    cutlass::int4b_t, cutlass::layout::TensorNHWC,            \
+                    cutlass::int4b_t,                                         \
+                    cutlass::layout::TensorNCxHWx<AccessSize>, ElementOutput, \
+                    cutlass::layout::TensorNHWC, ElementBias,                 \
+                    cutlass::layout::TensorNHWC, ElementAccumulator,          \
+                    cutlass::conv::ConvType::kConvolution,                    \
+                    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm75,      \
+                    ThreadBlockShape, WarpShape, InstructionShape,            \
+                    cutlass::epilogue::thread::BiasAddLinearCombinationClamp< \
+                            ElementOutput, OutputNum, ElementAccumulator,     \
+                            ElementBias, ElementCompute>,                     \
+                    cutlass::conv::threadblock::                              \
+                            ConvolutionFpropTransThreadblockSwizzle,          \
+                    Stages, AccessSize, AccessSize, true,                     \
+                    cutlass::arch::OpMultiplyAddSaturate,                     \
+                    cutlass::conv::ImplicitGemmMode::GEMM_TN,                 \
+                    WithoutSharedLoad>
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -85,10 +87,10 @@ TEST(SM75_Device_Convolution_s4_s4_NHWC_tensor_op_mmai8832_perf,
     using ElementBias = int32_t;
     using ElementCompute = float;
     using InstructionShape = cutlass::gemm::GemmShape<8, 8, 32>;
-    DEF_CONVOLUTION(16, 1);
-    DEF_CONVOLUTION(16, 2);
-    test::convolution::device::Testbed<Convolution_1> testbed_1;
-    test::convolution::device::Testbed<Convolution_2> testbed_2;
+    DEF_CONVOLUTION(16, 1, 8, false);
+    DEF_CONVOLUTION(16, 2, 8, false);
+    test::convolution::device::Testbed<Convolution_1_false> testbed_1_false;
+    test::convolution::device::Testbed<Convolution_2_false> testbed_2_false;
 
     using ConvolutionParameter = cutlass::conv::Conv2dProblemSize;
     std::vector<ConvolutionParameter> args;
@@ -101,14 +103,49 @@ TEST(SM75_Device_Convolution_s4_s4_NHWC_tensor_op_mmai8832_perf,
     double problem_gamma[] = {0.0};
     for (auto arg : args) {
         for (auto gamma : problem_gamma) {
-            testbed_1.perf(arg, cutlass::from_real<ElementCompute>(0.01234567),
-                           cutlass::from_real<ElementCompute>(1.07654321),
-                           cutlass::from_real<ElementCompute>(gamma), 1000,
-                           false);
-            testbed_2.perf(arg, cutlass::from_real<ElementCompute>(0.01234567),
-                           cutlass::from_real<ElementCompute>(1.07654321),
-                           cutlass::from_real<ElementCompute>(gamma), 1000,
-                           false);
+            testbed_1_false.perf(
+                    arg, cutlass::from_real<ElementCompute>(0.01234567),
+                    cutlass::from_real<ElementCompute>(1.07654321),
+                    cutlass::from_real<ElementCompute>(gamma), 1000, false);
+            testbed_2_false.perf(
+                    arg, cutlass::from_real<ElementCompute>(0.01234567),
+                    cutlass::from_real<ElementCompute>(1.07654321),
+                    cutlass::from_real<ElementCompute>(gamma), 1000, false);
+        }
+    }
+}
+
+TEST(SM75_Device_Convolution_s4_s4_NHWC_tensor_op_mmai8832_perf_reorderK,
+     128x32x64_64x32x64_16) {
+    using ThreadBlockShape = cutlass::gemm::GemmShape<128, 32, 64>;
+    using WarpShape = cutlass::gemm::GemmShape<64, 32, 64>;
+    using ElementOutput = cutlass::int4b_t;
+    using ElementAccumulator = int32_t;
+    using ElementBias = int32_t;
+    using ElementCompute = float;
+    using InstructionShape = cutlass::gemm::GemmShape<8, 8, 32>;
+    DEF_CONVOLUTION(16, 1, 8, true);
+    DEF_CONVOLUTION(16, 2, 8, true);
+    test::convolution::device::Testbed<Convolution_1_true> testbed_1_true;
+    test::convolution::device::Testbed<Convolution_2_true> testbed_2_true;
+
+    using ConvolutionParameter = cutlass::conv::Conv2dProblemSize;
+    std::vector<ConvolutionParameter> args;
+    cutlass::conv::Mode mode = cutlass::conv::Mode::kCrossCorrelation;
+    args.emplace_back(ConvolutionParameter{16, 368, 640, 16, 32, 3, 3, 184, 320,
+                                           1, 1, 2, 2, 1, 1, mode});
+
+    double problem_gamma[] = {0.0};
+    for (auto arg : args) {
+        for (auto gamma : problem_gamma) {
+            testbed_1_true.perf(
+                    arg, cutlass::from_real<ElementCompute>(0.01234567),
+                    cutlass::from_real<ElementCompute>(1.07654321),
+                    cutlass::from_real<ElementCompute>(gamma), 1000, false);
+            testbed_2_true.perf(
+                    arg, cutlass::from_real<ElementCompute>(0.01234567),
+                    cutlass::from_real<ElementCompute>(1.07654321),
+                    cutlass::from_real<ElementCompute>(gamma), 1000, false);
         }
     }
 }
@@ -122,10 +159,14 @@ TEST(SM75_Device_Convolution_s4_s4_NHWC_tensor_op_mmai8832_perf_1x1,
     using ElementBias = int32_t;
     using ElementCompute = float;
     using InstructionShape = cutlass::gemm::GemmShape<8, 8, 32>;
-    DEF_CONVOLUTION(32, 1);
-    DEF_CONVOLUTION(32, 2);
-    test::convolution::device::Testbed<Convolution_1> testbed_1;
-    test::convolution::device::Testbed<Convolution_2> testbed_2;
+    DEF_CONVOLUTION(32, 1, 8, false);
+    DEF_CONVOLUTION(32, 2, 8, false);
+    test::convolution::device::Testbed<Convolution_1_false> testbed_1_false;
+    test::convolution::device::Testbed<Convolution_2_false> testbed_2_false;
+    DEF_CONVOLUTION(32, 1, 8, true);
+    DEF_CONVOLUTION(32, 2, 8, true);
+    test::convolution::device::Testbed<Convolution_1_true, true> testbed_1_true;
+    test::convolution::device::Testbed<Convolution_2_true, true> testbed_2_true;
 
     using ConvolutionParameter = cutlass::conv::Conv2dProblemSize;
     std::vector<ConvolutionParameter> args;
@@ -138,14 +179,22 @@ TEST(SM75_Device_Convolution_s4_s4_NHWC_tensor_op_mmai8832_perf_1x1,
     double problem_gamma[] = {0.0};
     for (auto arg : args) {
         for (auto gamma : problem_gamma) {
-            testbed_1.perf(arg, cutlass::from_real<ElementCompute>(0.01234567),
-                           cutlass::from_real<ElementCompute>(1.07654321),
-                           cutlass::from_real<ElementCompute>(gamma), 1000,
-                           false);
-            testbed_2.perf(arg, cutlass::from_real<ElementCompute>(0.01234567),
-                           cutlass::from_real<ElementCompute>(1.07654321),
-                           cutlass::from_real<ElementCompute>(gamma), 1000,
-                           false);
+            testbed_1_false.perf(
+                    arg, cutlass::from_real<ElementCompute>(0.01234567),
+                    cutlass::from_real<ElementCompute>(1.07654321),
+                    cutlass::from_real<ElementCompute>(gamma), 1000, false);
+            testbed_2_false.perf(
+                    arg, cutlass::from_real<ElementCompute>(0.01234567),
+                    cutlass::from_real<ElementCompute>(1.07654321),
+                    cutlass::from_real<ElementCompute>(gamma), 1000, false);
+            testbed_1_true.perf(
+                    arg, cutlass::from_real<ElementCompute>(0.01234567),
+                    cutlass::from_real<ElementCompute>(1.07654321),
+                    cutlass::from_real<ElementCompute>(gamma), 1000, false);
+            testbed_2_true.perf(
+                    arg, cutlass::from_real<ElementCompute>(0.01234567),
+                    cutlass::from_real<ElementCompute>(1.07654321),
+                    cutlass::from_real<ElementCompute>(gamma), 1000, false);
         }
     }
 }
@@ -159,10 +208,14 @@ TEST(SM75_Device_Convolution_s4_s4_NHWC_tensor_op_mmai8832_perf,
     using ElementBias = int32_t;
     using ElementCompute = float;
     using InstructionShape = cutlass::gemm::GemmShape<8, 8, 32>;
-    DEF_CONVOLUTION(32, 1);
-    DEF_CONVOLUTION(32, 2);
-    test::convolution::device::Testbed<Convolution_1> testbed_1;
-    test::convolution::device::Testbed<Convolution_2> testbed_2;
+    DEF_CONVOLUTION(32, 1, 8, false);
+    DEF_CONVOLUTION(32, 2, 8, false);
+    test::convolution::device::Testbed<Convolution_1_false> testbed_1_false;
+    test::convolution::device::Testbed<Convolution_2_false> testbed_2_false;
+    DEF_CONVOLUTION(32, 1, 8, true);
+    DEF_CONVOLUTION(32, 2, 8, true);
+    test::convolution::device::Testbed<Convolution_1_true, true> testbed_1_true;
+    test::convolution::device::Testbed<Convolution_2_true, true> testbed_2_true;
 
     using ConvolutionParameter = cutlass::conv::Conv2dProblemSize;
     std::vector<ConvolutionParameter> args;
@@ -174,14 +227,22 @@ TEST(SM75_Device_Convolution_s4_s4_NHWC_tensor_op_mmai8832_perf,
     double problem_gamma[] = {0.0};
     for (auto arg : args) {
         for (auto gamma : problem_gamma) {
-            testbed_1.perf(arg, cutlass::from_real<ElementCompute>(0.01234567),
-                           cutlass::from_real<ElementCompute>(1.07654321),
-                           cutlass::from_real<ElementCompute>(gamma), 1000,
-                           false);
-            testbed_2.perf(arg, cutlass::from_real<ElementCompute>(0.01234567),
-                           cutlass::from_real<ElementCompute>(1.07654321),
-                           cutlass::from_real<ElementCompute>(gamma), 1000,
-                           false);
+            testbed_1_false.perf(
+                    arg, cutlass::from_real<ElementCompute>(0.01234567),
+                    cutlass::from_real<ElementCompute>(1.07654321),
+                    cutlass::from_real<ElementCompute>(gamma), 1000, false);
+            testbed_2_false.perf(
+                    arg, cutlass::from_real<ElementCompute>(0.01234567),
+                    cutlass::from_real<ElementCompute>(1.07654321),
+                    cutlass::from_real<ElementCompute>(gamma), 1000, false);
+            testbed_1_true.perf(
+                    arg, cutlass::from_real<ElementCompute>(0.01234567),
+                    cutlass::from_real<ElementCompute>(1.07654321),
+                    cutlass::from_real<ElementCompute>(gamma), 1000, false);
+            testbed_2_true.perf(
+                    arg, cutlass::from_real<ElementCompute>(0.01234567),
+                    cutlass::from_real<ElementCompute>(1.07654321),
+                    cutlass::from_real<ElementCompute>(gamma), 1000, false);
         }
     }
 }
@@ -195,10 +256,14 @@ TEST(SM75_Device_Convolution_s4_s4_NHWC_tensor_op_mmai8832_perf,
     using ElementBias = int32_t;
     using ElementCompute = float;
     using InstructionShape = cutlass::gemm::GemmShape<8, 8, 32>;
-    DEF_CONVOLUTION(32, 1);
-    DEF_CONVOLUTION(32, 2);
-    test::convolution::device::Testbed<Convolution_1> testbed_1;
-    test::convolution::device::Testbed<Convolution_2> testbed_2;
+    DEF_CONVOLUTION(32, 1, 8, false);
+    DEF_CONVOLUTION(32, 2, 8, false);
+    test::convolution::device::Testbed<Convolution_1_false> testbed_1_false;
+    test::convolution::device::Testbed<Convolution_2_false> testbed_2_false;
+    DEF_CONVOLUTION(32, 1, 16, true);
+    DEF_CONVOLUTION(32, 2, 16, true);
+    test::convolution::device::Testbed<Convolution_1_true, true> testbed_1_true;
+    test::convolution::device::Testbed<Convolution_2_true, true> testbed_2_true;
 
     using ConvolutionParameter = cutlass::conv::Conv2dProblemSize;
     std::vector<ConvolutionParameter> args;
@@ -210,14 +275,22 @@ TEST(SM75_Device_Convolution_s4_s4_NHWC_tensor_op_mmai8832_perf,
     double problem_gamma[] = {0.0};
     for (auto arg : args) {
         for (auto gamma : problem_gamma) {
-            testbed_1.perf(arg, cutlass::from_real<ElementCompute>(0.01234567),
-                           cutlass::from_real<ElementCompute>(1.07654321),
-                           cutlass::from_real<ElementCompute>(gamma), 1000,
-                           false);
-            testbed_2.perf(arg, cutlass::from_real<ElementCompute>(0.01234567),
-                           cutlass::from_real<ElementCompute>(1.07654321),
-                           cutlass::from_real<ElementCompute>(gamma), 1000,
-                           false);
+            testbed_1_false.perf(
+                    arg, cutlass::from_real<ElementCompute>(0.01234567),
+                    cutlass::from_real<ElementCompute>(1.07654321),
+                    cutlass::from_real<ElementCompute>(gamma), 1000, false);
+            testbed_2_false.perf(
+                    arg, cutlass::from_real<ElementCompute>(0.01234567),
+                    cutlass::from_real<ElementCompute>(1.07654321),
+                    cutlass::from_real<ElementCompute>(gamma), 1000, false);
+            testbed_1_true.perf(
+                    arg, cutlass::from_real<ElementCompute>(0.01234567),
+                    cutlass::from_real<ElementCompute>(1.07654321),
+                    cutlass::from_real<ElementCompute>(gamma), 1000, false);
+            testbed_2_true.perf(
+                    arg, cutlass::from_real<ElementCompute>(0.01234567),
+                    cutlass::from_real<ElementCompute>(1.07654321),
+                    cutlass::from_real<ElementCompute>(gamma), 1000, false);
         }
     }
 }

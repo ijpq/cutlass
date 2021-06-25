@@ -352,7 +352,8 @@ public:
 };
 
 template <typename Shape, typename Element, typename Layout, typename ThreadMap,
-          int AccessSize, typename TileMap, bool NeedLoadFromConstMem = true>
+          int AccessSize, typename TileMap, bool NeedLoadFromConstMem = true,
+          ImplicitGemmMode GemmMode = ImplicitGemmMode::GEMM_NT>
 class Conv2dTileSrcIteratorFpropPrecomp;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -364,15 +365,17 @@ class Conv2dTileSrcIteratorFpropPrecomp;
 ///            MaskedTileIteratorConcept
 ///
 template <typename Shape_, typename Element_, typename ThreadMap_,
-          int Interleaved, int AccessSize, typename TileMap_>
+          int Interleaved, int AccessSize, typename TileMap_,
+          ImplicitGemmMode GemmMode>
 class Conv2dTileSrcIteratorFpropPrecomp<
         Shape_, Element_, layout::TensorNCxHWx<Interleaved>, ThreadMap_,
-        AccessSize, TileMap_, true> {
+        AccessSize, TileMap_, true, GemmMode> {
 public:
     using Shape = layout::PitchLinearShape<Shape_::kColumn * Interleaved,
                                            Shape_::kRow / Interleaved>;
     using Element = Element_;
     static int const kInterleaved = Interleaved;
+    static ImplicitGemmMode const kGemmMode = GemmMode;
 
     using Layout = layout::TensorNCxHWx<kInterleaved>;
     using ThreadMap = ThreadMap_;
@@ -508,15 +511,25 @@ public:
             /// Initial offset of threadblock
             LogicalCoord const& threadblock_offset)
             : params_(params), is_residue_tile_(true) {
-        residue_extent_ = min(threadblock_offset.row() / kInterleaved +
+        LogicalCoord extent_;
+        LogicalCoord threadblock_offset_;
+        if (kGemmMode == ImplicitGemmMode::GEMM_NT) {
+            extent_ = extent;
+            threadblock_offset_ = threadblock_offset;
+        } else {
+            extent_ = LogicalCoord{extent.column(), extent.row()};
+            threadblock_offset_ = LogicalCoord{threadblock_offset.column(),
+                                               threadblock_offset.row()};
+        }
+        residue_extent_ = min(threadblock_offset_.row() / kInterleaved +
                                       params_.residue_offset_,
-                              extent.row() / kInterleaved);
+                              extent_.row() / kInterleaved);
 
         auto thread_offset_ = ThreadMap::initial_offset(thread_id);
         // Per-thread offset in logical coordinates of tensor
         LogicalCoord thread_offset =
-                LogicalCoord(threadblock_offset.row() / kInterleaved,
-                             threadblock_offset.column() * kInterleaved) +
+                LogicalCoord(threadblock_offset_.row() / kInterleaved,
+                             threadblock_offset_.column() * kInterleaved) +
                 LogicalCoord(thread_offset_.strided(),
                              thread_offset_.contiguous());
 
@@ -534,9 +547,9 @@ public:
     CUTLASS_HOST_DEVICE
     Conv2dTileSrcIteratorFpropPrecomp(
             Params const& params,  ///< Precomputed parameters object
-            Pointer pointer,       ///< Pointer to start of tensor
-            LogicalCoord extent,   ///< Extent of tensor
-            int thread_id          ///< ID of each participating thread
+            Pointer pointer,        ///< Pointer to start of tensor
+            LogicalCoord extent,    ///< Extent of tensor
+            int thread_id           ///< ID of each participating thread
             )
             : Conv2dTileSrcIteratorFpropPrecomp(params, pointer, extent,
                                                 thread_id, make_Coord(0, 0)) {}
@@ -700,7 +713,15 @@ public:
     void store(Fragment const& frag) { store_with_pointer_offset(frag, 0); }
 
     static Status can_implement(Conv2dProblemSize& problem_size) {
+        if (problem_size.mode != Mode::kCrossCorrelation) {
+            return Status::kErrorInvalidProblem;
+        }
+
         if (problem_size.R * problem_size.S > Params::kMaxFilterPixels) {
+            return Status::kErrorInvalidProblem;
+        }
+
+        if (problem_size.dilation_h != 1 || problem_size.dilation_w != 1) {
             return Status::kErrorInvalidProblem;
         }
 
@@ -717,12 +738,14 @@ public:
 ///            MaskedTileIteratorConcept
 ///
 template <typename Shape_, typename Element_, typename ThreadMap_,
-          int Interleaved, int AccessSize, typename TileMap_>
+          int Interleaved, int AccessSize, typename TileMap_,
+          ImplicitGemmMode GemmMode>
 class Conv2dTileSrcIteratorFpropPrecomp<
         Shape_, Element_, layout::TensorNCxHWx<Interleaved>, ThreadMap_,
-        AccessSize, TileMap_, false> {
+        AccessSize, TileMap_, false, GemmMode> {
 public:
     static int const kInterleaved = Interleaved;
+    static ImplicitGemmMode const kGemmMode = GemmMode;
     using Shape = layout::PitchLinearShape<Shape_::kColumn * kInterleaved,
                                            Shape_::kRow / kInterleaved>;
     using Element = Element_;
@@ -862,22 +885,32 @@ public:
             /// Initial offset of threadblock
             LogicalCoord const& threadblock_offset)
             : params_(params), is_residue_tile_(true) {
-        residue_offset_ = (extent.row() / kInterleaved -
-                           threadblock_offset.row() / kInterleaved) %
+        LogicalCoord extent_;
+        LogicalCoord threadblock_offset_;
+        if (kGemmMode == ImplicitGemmMode::GEMM_NT) {
+            extent_ = extent;
+            threadblock_offset_ = threadblock_offset;
+        } else {
+            extent_ = LogicalCoord{extent.column(), extent.row()};
+            threadblock_offset_ = LogicalCoord{threadblock_offset.column(),
+                                               threadblock_offset.row()};
+        }
+        residue_offset_ = (extent_.row() / kInterleaved -
+                           threadblock_offset_.row() / kInterleaved) %
                           Shape::kStrided;
         if (!residue_offset_) {
             residue_offset_ = Shape::kStrided;
         }
 
         residue_extent_ =
-                min(threadblock_offset.row() / kInterleaved + residue_offset_,
-                    extent.row() / kInterleaved);
+                min(threadblock_offset_.row() / kInterleaved + residue_offset_,
+                    extent_.row() / kInterleaved);
 
         auto thread_offset_ = ThreadMap::initial_offset(thread_id);
         // Per-thread offset in logical coordinates of tensor
         LogicalCoord thread_offset =
-                LogicalCoord(threadblock_offset.row() / kInterleaved,
-                             threadblock_offset.column() * kInterleaved) +
+                LogicalCoord(threadblock_offset_.row() / kInterleaved,
+                             threadblock_offset_.column() * kInterleaved) +
                 LogicalCoord(thread_offset_.strided(),
                              thread_offset_.contiguous());
 
@@ -892,9 +925,9 @@ public:
     CUTLASS_HOST_DEVICE
     Conv2dTileSrcIteratorFpropPrecomp(
             Params const& params,  ///< Precomputed parameters object
-            Pointer pointer,       ///< Pointer to start of tensor
-            LogicalCoord extent,   ///< Extent of tensor
-            int thread_id          ///< ID of each participating thread
+            Pointer pointer,      ///< Pointer to start of tensor
+            LogicalCoord extent,  ///< Extent of tensor
+            int thread_id         ///< ID of each participating thread
             )
             : Conv2dTileSrcIteratorFpropPrecomp(params, pointer, extent,
                                                 thread_id, make_Coord(0, 0)) {}
@@ -1103,6 +1136,18 @@ public:
     void store(Fragment const& frag) { store_with_pointer_offset(frag, 0); }
 
     static Status can_implement(Conv2dProblemSize& problem_size) {
+        if (problem_size.mode != Mode::kCrossCorrelation) {
+            return Status::kErrorInvalidProblem;
+        }
+
+        if (problem_size.R != 1 || problem_size.S != 1) {
+            return Status::kErrorInvalidProblem;
+        }
+
+        if (problem_size.dilation_h != 1 || problem_size.dilation_w != 1) {
+            return Status::kErrorInvalidProblem;
+        }
+
         return Status::kSuccess;
     }
 };

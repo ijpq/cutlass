@@ -166,9 +166,9 @@ struct ConvolutionFpropNCxHWxThreadblockSwizzle {
     }
 };
 
-struct ConvolutionFpropNHWCThreadblockSwizzle {
+struct ConvolutionFpropTransThreadblockSwizzle {
     CUTLASS_HOST_DEVICE
-    ConvolutionFpropNHWCThreadblockSwizzle() {}
+    ConvolutionFpropTransThreadblockSwizzle() {}
 
     /// Returns the shape of the problem in units of logical tiles
     CUTLASS_HOST_DEVICE

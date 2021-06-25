@@ -709,7 +709,15 @@ public:
     void store(Fragment const& frag) { store_with_pointer_offset(frag, 0); }
 
     static Status can_implement(Conv2dProblemSize& problem_size) {
+        if (problem_size.mode != Mode::kCrossCorrelation) {
+            return Status::kErrorInvalidProblem;
+        }
+
         if (problem_size.R * problem_size.S > Params::kMaxFilterPixels) {
+            return Status::kErrorInvalidProblem;
+        }
+
+        if (problem_size.dilation_h != 1 || problem_size.dilation_w != 1) {
             return Status::kErrorInvalidProblem;
         }
 
@@ -1114,6 +1122,18 @@ public:
     void store(Fragment const& frag) { store_with_pointer_offset(frag, 0); }
 
     static Status can_implement(Conv2dProblemSize& problem_size) {
+        if (problem_size.mode != Mode::kCrossCorrelation) {
+            return Status::kErrorInvalidProblem;
+        }
+
+        if (problem_size.R != 1 || problem_size.S != 1) {
+            return Status::kErrorInvalidProblem;
+        }
+
+        if (problem_size.dilation_h != 1 || problem_size.dilation_w != 1) {
+            return Status::kErrorInvalidProblem;
+        }
+
         return Status::kSuccess;
     }
 };

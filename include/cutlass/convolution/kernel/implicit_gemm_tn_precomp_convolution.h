@@ -211,7 +211,7 @@ struct ImplicitGemmTnPrecompConvolution {
                   params_src(args.ref_src.layout(), args.problem_size,
                              args.extra_param.extra_param_src),
                   ref_src(args.ref_src),
-                  params_filter(args.ref_filter.layout()),
+                  params_filter(args.ref_filter.layout(), args.problem_size),
                   ref_filter(args.ref_filter),
                   params_bias(args.ref_bias.layout()),
                   ref_bias(args.ref_bias),
@@ -310,12 +310,14 @@ struct ImplicitGemmTnPrecompConvolution {
 
         // Construct iterators to Src and Filter Tensor operands
         typename Mma::IteratorSrc iterator_src(
-                params.params_src, params.problem_size, params.ref_src.data(),
+                params.params_src, params.ref_src.data(),
+                {params.gemm_problem_size.m(), params.gemm_problem_size.k()},
                 thread_idx, tb_offset_src);
 
         typename Mma::IteratorFilter iterator_filter(
-                params.params_filter, params.problem_size,
-                params.ref_filter.data(), thread_idx, tb_offset_filter);
+                params.params_filter, params.ref_filter.data(),
+                {params.gemm_problem_size.k(), params.gemm_problem_size.n()},
+                thread_idx, tb_offset_filter);
 
         // Broadcast the warp_id computed by lane 0 to ensure dependent code
         // is compiled as warp-uniform.

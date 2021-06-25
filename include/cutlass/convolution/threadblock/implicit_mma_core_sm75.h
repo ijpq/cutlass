@@ -216,12 +216,14 @@ template <
         typename ElementDst_,
         /// Layout of accumulator
         typename LayoutDst_,
+        /// Number of stages used in the pipelined mainloop
+        int Stages,
         /// Operation performed by Convolution
         typename Operator_>
 struct DefaultMmaCore<Shape_, WarpShape_, gemm::GemmShape<8, 8, 16>, int8_t,
                       layout::TensorNCxHWx<32>, kAlignmentSrc, int8_t,
                       LayoutFilter_, kAlignmentFilter, ElementDst_, LayoutDst_,
-                      arch::OpClassTensorOp, 2, Operator_, true> {
+                      arch::OpClassTensorOp, Stages, Operator_, true> {
     using Shape = Shape_;
     using WarpShape = WarpShape_;
     using InstructionShape = gemm::GemmShape<8, 8, 16>;
@@ -333,6 +335,157 @@ struct DefaultMmaCore<Shape_, WarpShape_, gemm::GemmShape<8, 8, 16>, int8_t,
                                /// MatrixLayout)
             ElementSrc,        /// Data type of Src Tensor elements
             SmemLayoutSrc,     /// Layout of Src Tensor's matrix (concept:
+                               /// MatrixLayout)
+            ElementDst,        /// Element type of Dst Tensor matrix
+            layout::RowMajor,  /// Layout of Dst
+                               /// Tensor's matrix
+                               /// (concept:
+                               /// MatrixLayout)
+            Operator,          /// Operator describing the tensor operation
+            PartitionsK,       /// Number of partitions along K dimension
+            AccumulatorsInRowMajor>::Type;
+
+    /// Policy used to define MmaPipelined
+    using MmaPolicy =
+            gemm::threadblock::MmaPolicy<MmaTensorOp, MatrixShape<0, 0>,
+                                         MatrixShape<0, 0>, WarpCount::kK>;
+};
+
+/// Mma TN
+template <
+        /// Shape of threadblock-scoped matrix multiply operator (concept:
+        /// GemmShape)
+        typename Shape_,
+        /// Shape of warp-level matrix multiply operator (concept: GemmShape)
+        typename WarpShape_,
+        /// Access granularity of Src Tensor in units of elements
+        int kAlignmentSrc,
+        /// Layout of filter
+        typename LayoutFilter_,
+        /// Access granularity of Filter Tensor in units of elements
+        int kAlignmentFilter,
+        /// Data type of accumulator
+        typename ElementDst_,
+        /// Layout of accumulator
+        typename LayoutDst_,
+        /// Number of stages used in the pipelined mainloop
+        int Stages,
+        /// Operation performed by Convolution
+        typename Operator_>
+struct DefaultMmaCore<Shape_, WarpShape_, gemm::GemmShape<8, 8, 16>, int8_t,
+                      layout::TensorNCxHWx<32>, kAlignmentSrc, int8_t,
+                      LayoutFilter_, kAlignmentFilter, ElementDst_, LayoutDst_,
+                      arch::OpClassTensorOp, Stages, Operator_, true,
+                      ImplicitGemmMode::GEMM_TN> {
+    using Shape = Shape_;
+    using WarpShape = WarpShape_;
+    using InstructionShape = gemm::GemmShape<8, 8, 16>;
+    using ElementSrc = int8_t;
+    using LayoutSrc = layout::TensorNCxHWx<32>;
+    using ElementFilter = int8_t;
+    using LayoutFilter = LayoutFilter_;
+    using ElementDst = ElementDst_;
+    using LayoutDst = LayoutDst_;
+    using OperatorClass = arch::OpClassTensorOp;
+    static int const PartitionsK = Shape::kK / WarpShape::kK;
+    static int const kInterleavedK = 32;
+    static bool const AccumulatorsInRowMajor = true;
+    static_assert(PartitionsK == 1,
+                  "Split K algorithm for convolution operator is disabled");
+
+    /// Default Operator
+    using Operator = Operator_;
+
+    /// Number of warps present
+    using WarpCount = gemm::GemmShape<Shape::kM / WarpShape::kM,
+                                      Shape::kN / WarpShape::kN, PartitionsK>;
+
+    // Divisility requirements
+    static_assert(!(Shape::kM % WarpShape::kM) && !(Shape::kN % WarpShape::kN),
+                  "Threadblock-scoped GEMM should be divisible by warp-scoped "
+                  "GEMM size.");
+
+    /// Number of threads per warp
+    static int const kWarpSize =
+            gemm::warp::WarpSize<arch::OpClassTensorOp>::value;
+
+    /// Number of threads total
+    static int const kThreads = WarpCount::kCount * kWarpSize;
+
+    /// Size of a threadblock-scoped access
+    static int const kAccessSizeInBits = 128;
+
+    // Warp thread arrangement
+    static int const kElementsPerAccess =
+            kAccessSizeInBits / sizeof_bits<ElementSrc>::value;
+
+    static int const kWarpThreadArrangementContiguous =
+            kInterleavedK / kElementsPerAccess;
+
+    static int const kWarpThreadArrangementStrided =
+            kWarpSize / kWarpThreadArrangementContiguous;
+
+    //
+    // Shared memory layouts
+    //
+    using SmemLayoutSrc = layout::RowMajorTensorOpMultiplicandCrosswise<
+            sizeof_bits<ElementSrc>::value, kInterleavedK>;
+
+    using SmemLayoutFilter = layout::ColumnMajorTensorOpMultiplicandCrosswise<
+            sizeof_bits<ElementFilter>::value, kInterleavedK>;
+
+    //
+    // Iterators to write to shared memory
+    //
+
+    /// ThreadMap of iterator Src
+    using IteratorThreadMapSrc = PitchLinearWarpRakedThreadMapOpt<
+            layout::PitchLinearShape<Shape::kM * kInterleavedK,
+                                     Shape::kK / kInterleavedK>,
+            kThreads, layout::PitchLinearShape<32, 1>, kElementsPerAccess>;
+
+    /// Transpose the ThreadMap of iterator Src
+    using SmemThreadMapSrc = transform::TransposePitchLinearThreadMap<
+            IteratorThreadMapSrc,
+            layout::PitchLinearShape<kWarpThreadArrangementContiguous,
+                                     kWarpThreadArrangementStrided>>;
+
+    /// Shared memory iterator to Src Tensor operand
+    using SmemIteratorSrc = transform::threadblock::RegularTileIterator<
+            MatrixShape<Shape::kM, Shape::kK>, ElementSrc, SmemLayoutSrc, 0,
+            SmemThreadMapSrc>;
+
+    /// Policy of iterator Filter
+    using IteratorThreadMapFilter = PitchLinearWarpRakedThreadMapOpt<
+            layout::PitchLinearShape<Shape::kN * kInterleavedK,
+                                     Shape::kK / kInterleavedK>,
+            kThreads, layout::PitchLinearShape<32, 1>, kElementsPerAccess>;
+
+    /// Transpose the ThreadMap of iterator Filter
+    using SmemThreadMapFilter = transform::TransposePitchLinearThreadMap<
+            IteratorThreadMapFilter,
+            layout::PitchLinearShape<kWarpThreadArrangementContiguous,
+                                     kWarpThreadArrangementStrided>>;
+
+    /// Shared memory iterator to Filter Tensor operand
+    using SmemIteratorFilter = transform::threadblock::RegularTileIterator<
+            MatrixShape<Shape::kK, Shape::kN>, ElementFilter, SmemLayoutFilter,
+            1, SmemThreadMapFilter>;
+    //
+    // Warp-level matrix multiply operator
+    //
+
+    // Define the warp-level Tensor Op
+    using MmaTensorOp = typename cutlass::gemm::warp::DefaultMmaTensorOp<
+            WarpShape,         /// Size of the Gemm problem - concept:
+                               /// gemm::GemmShape<> 128, 128, 8
+            InstructionShape,  /// Instruction-level Gemm shape - concept
+                               /// gemm::GemmShape
+            ElementSrc,        /// Data type of Src Tensor elements
+            SmemLayoutSrc,     /// Layout of Src Tensor's matrix (concept:
+                               /// MatrixLayout)
+            ElementFilter,     /// Data type of Filter Tensor elements
+            SmemLayoutFilter,  /// Layout of Filter Tensor's Matrix (concept:
                                /// MatrixLayout)
             ElementDst,        /// Element type of Dst Tensor matrix
             layout::RowMajor,  /// Layout of Dst
@@ -513,6 +666,160 @@ struct DefaultMmaCore<Shape_, WarpShape_, gemm::GemmShape<8, 8, 32>,
                                          MatrixShape<0, 0>, WarpCount::kK>;
 };
 
+/// Mma TN
+template <
+        /// ElementSrc is int4b_t or uint4b_t
+        bool Signed,
+        /// Shape of threadblock-scoped matrix multiply operator (concept:
+        /// GemmShape)
+        typename Shape_,
+        /// Shape of warp-level matrix multiply operator (concept: GemmShape)
+        typename WarpShape_,
+        /// Access granularity of Src Tensor in units of elements
+        int kAlignmentSrc,
+        /// Layout of filter
+        typename LayoutFilter_,
+        /// Access granularity of Filter Tensor in units of elements
+        int kAlignmentFilter,
+        /// Data type of accumulator
+        typename ElementDst_,
+        /// Layout of accumulator
+        typename LayoutDst_,
+        /// Number of stages used in the pipelined mainloop
+        int Stages,
+        /// Operation performed by Convolution
+        typename Operator_>
+struct DefaultMmaCore<Shape_, WarpShape_, gemm::GemmShape<8, 8, 32>,
+                      integer_subbyte<4, Signed>, layout::TensorNCxHWx<64>,
+                      kAlignmentSrc, int4b_t, LayoutFilter_, kAlignmentFilter,
+                      ElementDst_, LayoutDst_, arch::OpClassTensorOp, Stages,
+                      Operator_, true, ImplicitGemmMode::GEMM_TN> {
+    using Shape = Shape_;
+    using WarpShape = WarpShape_;
+    using InstructionShape = gemm::GemmShape<8, 8, 32>;
+    using ElementSrc = integer_subbyte<4, Signed>;
+    using LayoutSrc = layout::TensorNCxHWx<64>;
+    using ElementFilter = int4b_t;
+    using LayoutFilter = LayoutFilter_;
+    using ElementDst = ElementDst_;
+    using LayoutDst = LayoutDst_;
+    using OperatorClass = arch::OpClassTensorOp;
+    static int const PartitionsK = Shape::kK / WarpShape::kK;
+    static int const kInterleavedK = 64;
+    static bool const AccumulatorsInRowMajor = true;
+    static_assert(PartitionsK == 1,
+                  "Split K algorithm for convolution operator is disabled");
+
+    /// Default Operator
+    using Operator = Operator_;
+
+    /// Number of warps present
+    using WarpCount = gemm::GemmShape<Shape::kM / WarpShape::kM,
+                                      Shape::kN / WarpShape::kN, PartitionsK>;
+
+    // Divisility requirements
+    static_assert(!(Shape::kM % WarpShape::kM) && !(Shape::kN % WarpShape::kN),
+                  "Threadblock-scoped GEMM should be divisible by warp-scoped "
+                  "GEMM size.");
+
+    /// Number of threads per warp
+    static int const kWarpSize =
+            gemm::warp::WarpSize<arch::OpClassTensorOp>::value;
+
+    /// Number of threads total
+    static int const kThreads = WarpCount::kCount * kWarpSize;
+
+    /// Size of a threadblock-scoped access
+    static int const kAccessSizeInBits = 128;
+
+    // Warp thread arrangement
+    static int const kElementsPerAccess =
+            kAccessSizeInBits / sizeof_bits<ElementSrc>::value;
+
+    static int const kWarpThreadArrangementContiguous =
+            kInterleavedK / kElementsPerAccess;
+
+    static int const kWarpThreadArrangementStrided =
+            kWarpSize / kWarpThreadArrangementContiguous;
+
+    //
+    // Shared memory layouts
+    //
+    using SmemLayoutSrc = layout::RowMajorTensorOpMultiplicandCrosswise<
+            sizeof_bits<ElementFilter>::value, kInterleavedK>;
+
+    using SmemLayoutFilter = layout::ColumnMajorTensorOpMultiplicandCrosswise<
+            sizeof_bits<ElementSrc>::value, kInterleavedK>;
+
+    //
+    // Iterators to write to shared memory
+    //
+
+    /// ThreadMap of iterator Src
+    using IteratorThreadMapSrc = PitchLinearWarpRakedThreadMapOpt<
+            layout::PitchLinearShape<Shape::kM * kInterleavedK,
+                                     Shape::kK / kInterleavedK>,
+            kThreads, layout::PitchLinearShape<32, 1>, kElementsPerAccess>;
+
+    /// Transpose the ThreadMap of iterator Src
+    using SmemThreadMapSrc = transform::TransposePitchLinearThreadMap<
+            IteratorThreadMapSrc,
+            layout::PitchLinearShape<kWarpThreadArrangementContiguous,
+                                     kWarpThreadArrangementStrided>>;
+
+    /// Shared memory iterator to Src Tensor operand
+    using SmemIteratorSrc = transform::threadblock::RegularTileIterator<
+            MatrixShape<Shape::kM, Shape::kK>, ElementSrc, SmemLayoutSrc, 0,
+            SmemThreadMapSrc>;
+
+    /// Policy of iterator Filter
+    using IteratorThreadMapFilter = PitchLinearWarpRakedThreadMapOpt<
+            layout::PitchLinearShape<Shape::kN * kInterleavedK,
+                                     Shape::kK / kInterleavedK>,
+            kThreads, layout::PitchLinearShape<32, 1>, kElementsPerAccess>;
+
+    /// Transpose the ThreadMap of iterator Filter
+    using SmemThreadMapFilter = transform::TransposePitchLinearThreadMap<
+            IteratorThreadMapFilter,
+            layout::PitchLinearShape<kWarpThreadArrangementContiguous,
+                                     kWarpThreadArrangementStrided>>;
+
+    /// Shared memory iterator to Filter Tensor operand
+    using SmemIteratorFilter = transform::threadblock::RegularTileIterator<
+            MatrixShape<Shape::kK, Shape::kN>, ElementFilter, SmemLayoutFilter,
+            1, SmemThreadMapFilter>;
+
+    //
+    // Warp-level matrix multiply operator
+    //
+
+    // Define the warp-level Tensor Op
+    using MmaTensorOp = typename cutlass::gemm::warp::DefaultMmaTensorOp<
+            WarpShape,         /// Size of the Gemm problem - concept:
+                               /// gemm::GemmShape<> 128, 128, 8
+            InstructionShape,  /// Instruction-level Gemm shape - concept
+                               /// gemm::GemmShape
+            ElementSrc,        /// Data type of Src Tensor elements
+            SmemLayoutSrc,     /// Layout of Src Tensor's matrix (concept:
+                               /// MatrixLayout)
+            ElementFilter,     /// Data type of Filter Tensor elements
+            SmemLayoutFilter,  /// Layout of Filter Tensor's Matrix (concept:
+                               /// MatrixLayout)
+            ElementDst,        /// Element type of Dst Tensor matrix
+            layout::RowMajor,  /// Layout of Dst
+                               /// Tensor's matrix
+                               /// (concept:
+                               /// MatrixLayout)
+            Operator,          /// Operator describing the tensor operation
+            PartitionsK,       /// Number of partitions along K dimension
+            AccumulatorsInRowMajor>::Type;
+
+    /// Policy used to define MmaPipelined
+    using MmaPolicy =
+            gemm::threadblock::MmaPolicy<MmaTensorOp, MatrixShape<0, 0>,
+                                         MatrixShape<0, 0>, WarpCount::kK>;
+};
+
 ////////////////////////////////////////////////////////////////////////////////
 
 /// Partial specialization:
@@ -543,11 +850,12 @@ template <
         int Stages,
         /// Operation performed by Convolution
         typename Operator_>
-struct DefaultMmaCore<
-        Shape_, WarpShape_, gemm::GemmShape<8, 8, 32>,
-        integer_subbyte<4, Signed>, layout::TensorNHWC, kAlignmentSrc, int4b_t,
-        layout::TensorNCxHWx<kAlignmentFilter>, kAlignmentFilter, ElementDst_,
-        LayoutDst_, arch::OpClassTensorOp, Stages, Operator_> {
+struct DefaultMmaCore<Shape_, WarpShape_, gemm::GemmShape<8, 8, 32>,
+                      integer_subbyte<4, Signed>, layout::TensorNHWC,
+                      kAlignmentSrc, int4b_t,
+                      layout::TensorNCxHWx<kAlignmentFilter>, kAlignmentFilter,
+                      ElementDst_, LayoutDst_, arch::OpClassTensorOp, Stages,
+                      Operator_, false, ImplicitGemmMode::GEMM_TN> {
     using Shape = Shape_;
     using WarpShape = WarpShape_;
     using InstructionShape = gemm::GemmShape<8, 8, 32>;
@@ -607,7 +915,7 @@ struct DefaultMmaCore<
     //
 
     /// ThreadMap of iterator A
-    using IteratorThreadMapSrc = transform::PitchLinearWarpRakedThreadMap<
+    using IteratorThreadMapSrc = PitchLinearWarpRakedThreadMapOpt<
             layout::PitchLinearShape<Shape::kK, Shape::kM>, kThreads,
             layout::PitchLinearShape<kWarpThreadArrangementContiguousA,
                                      kWarpThreadArrangementStridedA>,
@@ -619,7 +927,7 @@ struct DefaultMmaCore<
             IteratorThreadMapSrc>;
 
     /// ThreadMap of iterator B
-    using IteratorThreadMapFilter = transform::PitchLinearWarpRakedThreadMap<
+    using IteratorThreadMapFilter = PitchLinearWarpRakedThreadMapOpt<
             layout::PitchLinearShape<Shape::kK, Shape::kN>, kThreads,
             layout::PitchLinearShape<kWarpThreadArrangementContiguousB,
                                      kWarpThreadArrangementStridedB>,
