@@ -43,6 +43,7 @@
 
 #include "cutlass/array.h"
 #include "cutlass/cutlass.h"
+#include "cutlass/epilogue/epilogue.h"
 #include "cutlass/epilogue/thread/numeric_array_converter_policy.h"
 #include "cutlass/functional.h"
 #include "cutlass/numeric_conversion.h"
@@ -83,6 +84,9 @@ public:
     using ElementCompute = ElementCompute_;
 
     static int const kCount = Count;
+
+    static EpilogueType const kType =
+            EpilogueType::kBiasAddLinearCombinationClamp;
 
     using FragmentOutput = Array<ElementOutput, kCount>;
     using FragmentAccumulator = Array<ElementAccumulator, kCount>;
@@ -365,6 +369,7 @@ public:
 };
 
 ////////////////////////////////////////////////////////////////////////////////
+
 template <typename ElementOutput_, int Count, typename ElementAccumulator_,
           typename ElementBias_, typename ElementCompute_,
           FloatRoundStyle Round>

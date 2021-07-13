@@ -114,11 +114,11 @@ template <
                                               ElementA_, ElementB_, ElementC_,
                                               ElementAccumulator_>::kStages,
         /// Access granularity of A matrix in units of elements
-        int kAlignmentA = DefaultGemmConfiguration<
+        int AlignmentA = DefaultGemmConfiguration<
                 OperatorClass_, ArchTag_, ElementA_, ElementB_, ElementC_,
                 ElementAccumulator_>::kAlignmentA,
         /// Access granularity of B matrix in units of elements
-        int kAlignmentB = DefaultGemmConfiguration<
+        int AlignmentB = DefaultGemmConfiguration<
                 OperatorClass_, ArchTag_, ElementA_, ElementB_, ElementC_,
                 ElementAccumulator_>::kAlignmentB,
         /// Operation performed by GEMM
@@ -145,6 +145,11 @@ public:
     using ThreadblockSwizzle = ThreadblockSwizzle_;
     using Operator = Operator_;
     static int const kStages = Stages;
+    static int const kAlignmentA = AlignmentA;
+    static int const kAlignmentB = AlignmentB;
+    static int const kAlignmentC = EpilogueOutputOp::kCount;
+    static ComplexTransform const kTransformA = ComplexTransform::kNone;
+    static ComplexTransform const kTransformB = ComplexTransform::kNone;
 
     /// GEMM kernel
     using GemmKernel = typename kernel::DefaultGemmSplitKParallel<

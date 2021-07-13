@@ -128,6 +128,7 @@ struct ImplicitGemmNtConvolution {
         typename EpilogueOutputOp::Params output_op;
         typename Mma::TransformSrc::Params transform_src;
         typename Mma::TransformFilter::Params transform_filter;
+        ExtraParam extra_param;
 
         /// Default ctor
         CUTLASS_HOST_DEVICE

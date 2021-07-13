@@ -450,7 +450,6 @@ private:
     bool is_residue_tile_;
 
 private:
-   
     CUTLASS_HOST_DEVICE
     void initialize_predicate_and_pointers_(Pointer pointer,
                                             Index thread_offset) {
@@ -547,9 +546,9 @@ public:
     CUTLASS_HOST_DEVICE
     Conv2dTileSrcIteratorFpropPrecomp(
             Params const& params,  ///< Precomputed parameters object
-            Pointer pointer,        ///< Pointer to start of tensor
-            LogicalCoord extent,    ///< Extent of tensor
-            int thread_id           ///< ID of each participating thread
+            Pointer pointer,       ///< Pointer to start of tensor
+            LogicalCoord extent,   ///< Extent of tensor
+            int thread_id          ///< ID of each participating thread
             )
             : Conv2dTileSrcIteratorFpropPrecomp(params, pointer, extent,
                                                 thread_id, make_Coord(0, 0)) {}
@@ -855,8 +854,10 @@ private:
                     params_(LogicalCoord{thread_offset.row() * kInterleaved,
                                          col_offset / kInterleaved});
 
-            pointer_[access_idx] = pointer + params_.layout_(coord) +
-                                   col_offset % kInterleaved;
+            pointer_[access_idx] =
+                    pointer +
+                    (params_.layout_(coord) + col_offset % kInterleaved) *
+                            sizeof_bits<Element>::value / 8;
             bool guard = coord.n() < params_.n_ && coord.h() >= 0 &&
                          coord.h() < params_.hi_ && coord.w() >= 0 &&
                          coord.w() < params_.wi_;
@@ -925,9 +926,9 @@ public:
     CUTLASS_HOST_DEVICE
     Conv2dTileSrcIteratorFpropPrecomp(
             Params const& params,  ///< Precomputed parameters object
-            Pointer pointer,      ///< Pointer to start of tensor
-            LogicalCoord extent,  ///< Extent of tensor
-            int thread_id         ///< ID of each participating thread
+            Pointer pointer,       ///< Pointer to start of tensor
+            LogicalCoord extent,   ///< Extent of tensor
+            int thread_id          ///< ID of each participating thread
             )
             : Conv2dTileSrcIteratorFpropPrecomp(params, pointer, extent,
                                                 thread_id, make_Coord(0, 0)) {}

@@ -44,6 +44,7 @@
 
 #include "cutlass/array.h"
 #include "cutlass/cutlass.h"
+#include "cutlass/epilogue/epilogue.h"
 #include "cutlass/epilogue/thread/activation.h"
 #include "cutlass/epilogue/thread/numeric_array_converter_policy.h"
 #include "cutlass/functional.h"
@@ -87,6 +88,9 @@ public:
 
     static int const kCount = Count;
 
+    static EpilogueType const kType =
+            EpilogueType::kBiasAddLinearCombinationHSwishClamp;
+
     using FragmentOutput = Array<ElementOutput, kCount>;
     using FragmentAccumulator = Array<ElementAccumulator, kCount>;
     using FragmentBias = Array<ElementBias, kCount>;
@@ -107,7 +111,6 @@ public:
         ElementCompute delta;             ///< add constant before hswish
         ElementCompute theta;             ///< add constant after hswish
         ElementCompute scale;             ///< scales output tensor
-        ElementCompute inv_scale;         ///< inv scales output tensor
         ElementCompute const* alpha_ptr;  ///< pointer to accumulator scalar -
                                           ///< if not null, loads it from memory
         ElementCompute const* beta_ptr;   ///< pointer to bias scalar - if not
@@ -133,7 +136,6 @@ public:
                   delta(ElementCompute(0)),
                   theta(ElementCompute(0)),
                   scale(ElementCompute(1)),
-                  inv_scale(ElementCompute(1.f / scale)),
                   alpha_ptr(nullptr),
                   beta_ptr(nullptr),
                   gamma_ptr(nullptr),
@@ -151,7 +153,6 @@ public:
                   delta(delta),
                   theta(theta),
                   scale(scale),
-                  inv_scale(ElementCompute(1.f / scale)),
                   alpha_ptr(nullptr),
                   beta_ptr(nullptr),
                   gamma_ptr(nullptr),
@@ -170,7 +171,6 @@ public:
                   delta(0),
                   theta(0),
                   scale(0),
-                  inv_scale(0),
                   alpha_ptr(alpha_ptr),
                   beta_ptr(beta_ptr),
                   gamma_ptr(gamma_ptr),
@@ -305,6 +305,7 @@ public:
         intermediate = mul_add_bias(beta_, converted_bias,
                                     intermediate);        // D = beta * bias + D
         intermediate = plus_delta(delta_, intermediate);  // D = D + delta
+
         // Compute threshold optionally
         intermediate =
                 hswish(scale_, inv_scale_, intermediate);  // D = hswish(D)
@@ -427,6 +428,7 @@ public:
 };
 
 ////////////////////////////////////////////////////////////////////////////////
+
 template <typename ElementOutput_, int Count, typename ElementAccumulator_,
           typename ElementBias_, typename ElementCompute_,
           FloatRoundStyle Round>

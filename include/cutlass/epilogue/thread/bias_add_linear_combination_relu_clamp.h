@@ -44,6 +44,7 @@
 
 #include "cutlass/array.h"
 #include "cutlass/cutlass.h"
+#include "cutlass/epilogue/epilogue.h"
 #include "cutlass/epilogue/thread/activation.h"
 #include "cutlass/epilogue/thread/numeric_array_converter_policy.h"
 #include "cutlass/functional.h"
@@ -86,6 +87,9 @@ public:
     using ElementCompute = ElementCompute_;
 
     static int const kCount = Count;
+
+    static EpilogueType const kType =
+            EpilogueType::kBiasAddLinearCombinationReluClamp;
 
     using FragmentOutput = Array<ElementOutput, kCount>;
     using FragmentAccumulator = Array<ElementAccumulator, kCount>;
@@ -169,6 +173,7 @@ public:
                   gamma(0),
                   delta(0),
                   theta(0),
+                  threshold(0),
                   alpha_ptr(alpha_ptr),
                   beta_ptr(beta_ptr),
                   gamma_ptr(gamma_ptr),
@@ -420,6 +425,7 @@ public:
 };
 
 ////////////////////////////////////////////////////////////////////////////////
+
 template <typename ElementOutput_, int Count, typename ElementAccumulator_,
           typename ElementBias_, typename ElementCompute_,
           FloatRoundStyle Round>

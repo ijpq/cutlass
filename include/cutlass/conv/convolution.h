@@ -113,6 +113,8 @@ enum class StrideSupport {
 /// Identifies split-K mode
 enum class SplitKMode { kNone, kSerial, kParallel };
 
+enum class ImplicitGemmMode { GEMM_NT, GEMM_TN };
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 }  // namespace conv

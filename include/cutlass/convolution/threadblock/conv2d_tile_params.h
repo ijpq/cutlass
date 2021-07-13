@@ -66,7 +66,6 @@
 namespace cutlass {
 namespace conv {
 
-enum class ImplicitGemmMode { GEMM_NT, GEMM_TN };
 namespace threadblock {
 
 enum class TileMapType {

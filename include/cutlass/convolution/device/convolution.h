@@ -151,6 +151,7 @@ public:
     static int const kAlignmentDst = EpilogueOutputOp::kCount;
     static bool const kNeedLoadFromConstMem = NeedLoadFromConstMem;
     static cutlass::conv::ImplicitGemmMode const kGemmMode = GemmMode;
+    static bool const kWithoutSharedLoad = WithoutSharedLoad;
 
     using ConvolutionKernel =
             typename cutlass::conv::kernel::DefaultConvolution2dFprop<
@@ -313,6 +314,8 @@ template <
         typename LayoutBias_,
         /// Element type for internal accumulation
         typename ElementAccumulator_,
+        /// Convolution Type
+        ConvType ConvolutionType = ConvType::kConvolution,
         /// Operator class tag
         typename OperatorClass_ = arch::OpClassSimt,
         /// Tag indicating architecture to tune for
@@ -377,12 +380,14 @@ public:
     using EpilogueOutputOp = EpilogueOutputOp_;
     using ThreadblockSwizzle = ThreadblockSwizzle_;
     using Operator = Operator_;
+    static const ConvType kConvolutionType = ConvolutionType;
     static int const kStages = Stages;
     static int const kAlignmentSrc = AlignmentSrc;
     static int const kAlignmentFilter = AlignmentFilter;
     static int const kAlignmentDst = EpilogueOutputOp::kCount;
     static bool const kNeedLoadFromConstMem = NeedLoadFromConstMem;
     static cutlass::conv::ImplicitGemmMode const kGemmMode = GemmMode;
+    static bool const kWithoutSharedLoad = false;
 
     using ConvolutionKernel =
             typename cutlass::conv::kernel::DefaultConvolution2dDgrad<
