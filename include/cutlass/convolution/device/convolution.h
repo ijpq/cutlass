@@ -115,7 +115,8 @@ template <
                 OperatorClass_, ArchTag_, ElementSrc_, ElementFilter_,
                 ElementDst_, ElementAccumulator_>::kAlignmentFilter,
         /// whether use special optimization for convolution 1x1
-        bool NeedLoadFromConstMem = true,
+        cutlass::conv::SpecialOptimizeDesc SpecialOpt =
+                cutlass::conv::SpecialOptimizeDesc::NONE,
         /// Operation performed by Convolution
         typename Operator_ = typename DefaultConvolutionConfiguration<
                 OperatorClass_, ArchTag_, ElementSrc_, ElementFilter_,
@@ -149,7 +150,7 @@ public:
     static int const kAlignmentSrc = AlignmentSrc;
     static int const kAlignmentFilter = AlignmentFilter;
     static int const kAlignmentDst = EpilogueOutputOp::kCount;
-    static bool const kNeedLoadFromConstMem = NeedLoadFromConstMem;
+    static cutlass::conv::SpecialOptimizeDesc const kSpecialOpt = SpecialOpt;
     static cutlass::conv::ImplicitGemmMode const kGemmMode = GemmMode;
     static bool const kWithoutSharedLoad = WithoutSharedLoad;
 
@@ -159,8 +160,8 @@ public:
                     ElementDst, LayoutDst, ElementAccumulator, OperatorClass,
                     ArchTag, ThreadblockShape, WarpShape, InstructionShape,
                     EpilogueOutputOp, ThreadblockSwizzle, kStages, Operator,
-                    kAlignmentSrc, kAlignmentFilter, kNeedLoadFromConstMem,
-                    kGemmMode, WithoutSharedLoad>::Kernel;
+                    kAlignmentSrc, kAlignmentFilter, kSpecialOpt, kGemmMode,
+                    WithoutSharedLoad>::Kernel;
 
     using TensorRefSrc = typename ConvolutionKernel::TensorRefSrc;
     using TensorRefFilter = typename ConvolutionKernel::TensorRefFilter;
@@ -351,13 +352,14 @@ template <
         int AlignmentFilter = DefaultConvolutionConfiguration<
                 OperatorClass_, ArchTag_, ElementSrc_, ElementFilter_,
                 ElementDst_, ElementAccumulator_>::kAlignmentFilter,
-        /// whether use special optimization for convolution 1x1
-        bool NeedLoadFromConstMem = true,
+        /// whether use special optimization for deconv stride 2
+        cutlass::conv::SpecialOptimizeDesc SpecialOpt =
+                cutlass::conv::SpecialOptimizeDesc::NONE,
         /// Operation performed by Convolution
         typename Operator_ = typename DefaultConvolutionConfiguration<
                 OperatorClass_, ArchTag_, ElementSrc_, ElementFilter_,
-                ElementDst_, ElementAccumulator_>::Operator, 
-                /// Implicit Gemm Mode
+                ElementDst_, ElementAccumulator_>::Operator,
+        /// Implicit Gemm Mode
         cutlass::conv::ImplicitGemmMode GemmMode =
                 cutlass::conv::ImplicitGemmMode::GEMM_NT>
 class Deconvolution {
@@ -385,7 +387,7 @@ public:
     static int const kAlignmentSrc = AlignmentSrc;
     static int const kAlignmentFilter = AlignmentFilter;
     static int const kAlignmentDst = EpilogueOutputOp::kCount;
-    static bool const kNeedLoadFromConstMem = NeedLoadFromConstMem;
+    static cutlass::conv::SpecialOptimizeDesc const kSpecialOpt = SpecialOpt;
     static cutlass::conv::ImplicitGemmMode const kGemmMode = GemmMode;
     static bool const kWithoutSharedLoad = false;
 
@@ -395,7 +397,7 @@ public:
                     ElementDst, LayoutDst, ElementAccumulator, OperatorClass,
                     ArchTag, ThreadblockShape, WarpShape, InstructionShape,
                     EpilogueOutputOp, ThreadblockSwizzle, kStages, Operator,
-                    kAlignmentSrc, kAlignmentFilter, kNeedLoadFromConstMem,
+                    kAlignmentSrc, kAlignmentFilter, kSpecialOpt,
                     kGemmMode>::Kernel;
 
     using TensorRefSrc = typename ConvolutionKernel::TensorRefSrc;

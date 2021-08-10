@@ -74,7 +74,8 @@ TEST(SM75_Device_Convolution_u4_s4_NC64HW64_tensor_op_mmai8832_reorderK,
                     ElementOutput, 16, ElementAccumulator, ElementBias,
                     ElementCompute>,
             cutlass::conv::threadblock::ConvolutionFpropTransThreadblockSwizzle,
-            2, 32, 32, true, cutlass::arch::OpMultiplyAddSaturate,
+            2, 32, 32, cutlass::conv::SpecialOptimizeDesc::NONE,
+            cutlass::arch::OpMultiplyAddSaturate,
             cutlass::conv::ImplicitGemmMode::GEMM_TN, true>;
     EXPECT_TRUE(
             (test::convolution::device::TestConvolutionPerf<Convolution, true>(

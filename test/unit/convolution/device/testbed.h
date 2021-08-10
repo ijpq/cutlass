@@ -294,9 +294,9 @@ struct Testbed {
             if (cutlass::platform::is_same<
                         cutlass::layout::TensorNHWC,
                         typename Convolution::LayoutSrc>::value &&
-                conv_param.K % 32 == 0) {
+                conv_param.K % 16 == 0) {
                 const int kN = Convolution::ThreadblockShape::kN;
-                EXPECT_TRUE(kN == 64 || kN == 32);
+                EXPECT_TRUE(kN == 64 || kN == 32 || kN == 16);
                 if (kN == 64) {
                     cutlass::reorder_row<typename Convolution::ElementFilter,
                                          typename Convolution::LayoutFilter,
@@ -304,10 +304,17 @@ struct Testbed {
                             tensor_filter_reordered.host_ref(),
                             tensor_filter.host_ref(), conv_param.K,
                             conv_param.R * conv_param.S * conv_param.C);
-                } else {
+                } else if (kN == 32) {
                     cutlass::reorder_row<typename Convolution::ElementFilter,
                                          typename Convolution::LayoutFilter,
                                          32>(
+                            tensor_filter_reordered.host_ref(),
+                            tensor_filter.host_ref(), conv_param.K,
+                            conv_param.R * conv_param.S * conv_param.C);
+                } else {
+                    cutlass::reorder_row<typename Convolution::ElementFilter,
+                                         typename Convolution::LayoutFilter,
+                                         16>(
                             tensor_filter_reordered.host_ref(),
                             tensor_filter.host_ref(), conv_param.K,
                             conv_param.R * conv_param.S * conv_param.C);
@@ -752,6 +759,11 @@ bool TestConvolutionNHWC_ReorderK() {
                     if (arg.K % Convolution::ThreadblockShape::kN != 0)
                         continue;
                     if (cutlass::platform::is_same<
+                                cutlass::layout::TensorNCxHWx<4>,
+                                typename Convolution::LayoutFilter>::value &&
+                        (arg.C % 4 != 0))
+                        continue;
+                    if (cutlass::platform::is_same<
                                 cutlass::layout::TensorNCxHWx<8>,
                                 typename Convolution::LayoutFilter>::value &&
                         (arg.C % 8 != 0))
@@ -1087,7 +1099,8 @@ bool TestConvolution1x1Perf(int iterations = 1, int batch = 64,
 
 template <typename Convolution, bool ReorderK = false>
 bool TestDetectionPerf(int iterations = 1, int batch = 16,
-                       bool tensor_op = false, bool do_verify = true) {
+                       bool tensor_op = false, bool do_verify = true,
+                       int alignment = 32) {
     bool passed = true;
 
     double problem_alpha[] = {1.0};
@@ -1105,7 +1118,7 @@ bool TestDetectionPerf(int iterations = 1, int batch = 16,
 
     args.emplace_back(ConvolutionParameter{batch, 92, 160, 16, 16, 3, 3, 92,
                                            160, 1, 1, 1, 1, 1, 1, mode});
-    args.emplace_back(ConvolutionParameter{batch, 92, 160, 16, 4, 3, 3, 92, 160,
+    args.emplace_back(ConvolutionParameter{batch, 92, 160, 4, 16, 3, 3, 92, 160,
                                            1, 1, 1, 1, 1, 1, mode});
     args.emplace_back(ConvolutionParameter{batch, 46, 80, 16, 16, 3, 3, 46, 80,
                                            1, 1, 1, 1, 1, 1, mode});
@@ -1125,7 +1138,8 @@ bool TestDetectionPerf(int iterations = 1, int batch = 16,
         for (auto alpha : problem_alpha) {
             for (auto beta : problem_beta) {
                 for (auto gamma : problem_gamma) {
-                    if (tensor_op && (arg.C % 32 != 0 || arg.K % 32 != 0))
+                    if (tensor_op &&
+                        (arg.C % alignment != 0 || arg.K % alignment != 0))
                         continue;
                     passed = testbed.perf(
                             arg, cutlass::from_real<ElementCompute>(alpha),

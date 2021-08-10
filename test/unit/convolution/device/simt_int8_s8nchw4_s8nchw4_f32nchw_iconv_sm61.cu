@@ -74,7 +74,8 @@
                         ElementCompute>,                                       \
                 cutlass::conv::threadblock::                                   \
                         ConvolutionFpropNCxHWxThreadblockSwizzle,              \
-                2, 4, 4, true, cutlass::arch::OpMultiplyAdd>;                  \
+                2, 4, 4, cutlass::conv::SpecialOptimizeDesc::NONE,             \
+                cutlass::arch::OpMultiplyAdd>;                                 \
         EXPECT_TRUE(                                                           \
                 test::convolution::device::TestAllConvolution<Convolution>()); \
     } while (0)

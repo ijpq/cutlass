@@ -25,7 +25,8 @@
  *
  **************************************************************************************************/
 /**
- * \file test/unit/convolution/device/simt_int8_iconv_sm61_perf.cu
+ * \file
+ * test/unit/convolution/device/convolution_s8nchw32_s8chwn32_s8nchw32_tensor_op_s32_sm75_perf.cu
  *
  * Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
  *
@@ -103,7 +104,8 @@ TEST(SM75_Device_Convolution_s8_s8_NC32HW32_tensor_op_mmai8816_reorderK_perf,
                     ElementOutput, 8, ElementAccumulator, int32_t,
                     ElementCompute>,
             cutlass::conv::threadblock::ConvolutionFpropTransThreadblockSwizzle,
-            2, 16, 16, true, cutlass::arch::OpMultiplyAddSaturate,
+            2, 16, 16, cutlass::conv::SpecialOptimizeDesc::NONE,
+            cutlass::arch::OpMultiplyAddSaturate,
             cutlass::conv::ImplicitGemmMode::GEMM_TN, true>;
 
     EXPECT_TRUE(
@@ -132,7 +134,7 @@ TEST(SM75_Device_Convolution1x1_s8_s8_NC32HW32_tensor_op_mmai8816_perf,
                     ElementCompute>,
             cutlass::conv::threadblock::
                     ConvolutionFpropNCxHWxThreadblockSwizzle,
-            2, 16, 16, false>;
+            2, 16, 16, cutlass::conv::SpecialOptimizeDesc::CONV_FILTER_UNITY>;
 
     EXPECT_TRUE(test::convolution::device::TestConvolution1x1Perf<Convolution>(
             1000, 256, true, false));
@@ -158,7 +160,8 @@ TEST(SM75_Device_Convolution1x1_s8_s8_NC32HW32_tensor_op_mmai8816_reorderK_perf,
                     ElementOutput, 8, ElementAccumulator, int32_t,
                     ElementCompute>,
             cutlass::conv::threadblock::ConvolutionFpropTransThreadblockSwizzle,
-            2, 16, 16, false, cutlass::arch::OpMultiplyAddSaturate,
+            2, 16, 16, cutlass::conv::SpecialOptimizeDesc::CONV_FILTER_UNITY,
+            cutlass::arch::OpMultiplyAddSaturate,
             cutlass::conv::ImplicitGemmMode::GEMM_TN, true>;
 
     EXPECT_TRUE((test::convolution::device::TestConvolution1x1Perf<Convolution,
@@ -187,7 +190,7 @@ TEST(SM75_Device_Convolution_s8_s8_NC32HW32_tensor_op_mmai8816_perf,
                     ElementCompute>,
             cutlass::conv::threadblock::
                     ConvolutionFpropNCxHWxThreadblockSwizzle,
-            1, 16, 16, true>;
+            1, 16, 16, cutlass::conv::SpecialOptimizeDesc::NONE>;
 
     EXPECT_TRUE(test::convolution::device::TestDetectionPerf<Convolution>(
             1000, 16, true, false));
@@ -213,7 +216,8 @@ TEST(SM75_Device_Convolution_s8_s8_NC32HW32_tensor_op_mmai8816_reorderK_perf,
                     ElementOutput, 8, ElementAccumulator, int32_t,
                     ElementCompute>,
             cutlass::conv::threadblock::ConvolutionFpropTransThreadblockSwizzle,
-            1, 16, 16, true, cutlass::arch::OpMultiplyAddSaturate,
+            1, 16, 16, cutlass::conv::SpecialOptimizeDesc::NONE,
+            cutlass::arch::OpMultiplyAddSaturate,
             cutlass::conv::ImplicitGemmMode::GEMM_TN, true>;
 
     EXPECT_TRUE(

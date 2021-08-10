@@ -87,8 +87,8 @@ public:
     static int const kAlignmentSrc = ImplicitGemmKernel::kAlignmentSrc;
     static int const kAlignmentFilter = ImplicitGemmKernel::kAlignmentFilter;
     static int const kAlignmentDst = EpilogueOutputOp::kCount;
-    static bool const kNeedLoadFromConstMem =
-            ImplicitGemmKernel::kNeedLoadFromConstMem;
+    static cutlass::conv::SpecialOptimizeDesc const kSpecialOpt =
+            ImplicitGemmKernel::kSpecialOpt;
 
     /// Argument structure
     using Arguments = typename ImplicitGemmKernel::Arguments;

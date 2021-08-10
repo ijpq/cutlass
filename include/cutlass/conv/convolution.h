@@ -115,6 +115,12 @@ enum class SplitKMode { kNone, kSerial, kParallel };
 
 enum class ImplicitGemmMode { GEMM_NT, GEMM_TN };
 
+enum class SpecialOptimizeDesc {
+    NONE = 0,
+    CONV_FILTER_UNITY = 1,
+    DECONV_DOUBLE_UPSAMPLING = 2
+};
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 }  // namespace conv

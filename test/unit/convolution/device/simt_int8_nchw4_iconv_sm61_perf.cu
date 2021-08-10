@@ -128,7 +128,7 @@ TEST(SM61_Device_Convolution1x1_s8_s8_NC4HW4_simt_op_dp4a_perf,
                     ElementCompute>,
             cutlass::conv::threadblock::
                     ConvolutionFpropNCxHWxThreadblockSwizzle,
-            2, 4, 16, false>;
+            2, 4, 16, cutlass::conv::SpecialOptimizeDesc::CONV_FILTER_UNITY>;
 
     EXPECT_TRUE(test::convolution::device::TestConvolution1x1Perf<Convolution>(
             1000));

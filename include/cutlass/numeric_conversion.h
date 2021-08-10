@@ -969,6 +969,33 @@ struct NumericArrayConverter<int4b_t, int, 8, Round> {
     result_type operator()(source_type const& s) { return convert(s); }
 };
 
+template <FloatRoundStyle Round>
+struct NumericArrayConverter<int4b_t, int, 4, Round> {
+    using result_type = Array<int4b_t, 4>;
+    using source_type = Array<int, 4>;
+    static FloatRoundStyle const round_style = Round;
+
+    CUTLASS_HOST_DEVICE
+    static result_type convert(source_type const& source) {
+        uint32_t tmp;
+
+        asm volatile(
+                "{ .reg .u32 r4;"
+                "cvt.pack.sat.s4.s32.b32   r4, %4, %3, 0;"
+                "cvt.pack.sat.s4.s32.b32   %0, %2, %1, r4;"
+                "}"
+                : "=r"(tmp)
+                : "r"(source[0]), "r"(source[1]), "r"(source[2]),
+                  "r"(source[3]));
+
+        uint16_t out = (tmp & 0xffff);
+        return reinterpret_cast<result_type const&>(out);
+    }
+
+    CUTLASS_HOST_DEVICE
+    result_type operator()(source_type const& s) { return convert(s); }
+};
+
 /// Partial specialization for Array<int4b_t> <= Array<int>
 template <int N, FloatRoundStyle Round>
 struct NumericArrayConverter<int4b_t, int, N, Round> {
@@ -1024,6 +1051,33 @@ struct NumericArrayConverter<uint4b_t, int, 8, Round> {
                   "r"(source[3]), "r"(source[4]), "r"(source[5]),
                   "r"(source[6]), "r"(source[7]));
 
+        return reinterpret_cast<result_type const&>(out);
+    }
+
+    CUTLASS_HOST_DEVICE
+    result_type operator()(source_type const& s) { return convert(s); }
+};
+
+template <FloatRoundStyle Round>
+struct NumericArrayConverter<uint4b_t, int, 4, Round> {
+    using result_type = Array<uint4b_t, 4>;
+    using source_type = Array<int, 4>;
+    static FloatRoundStyle const round_style = Round;
+
+    CUTLASS_HOST_DEVICE
+    static result_type convert(source_type const& source) {
+        uint32_t tmp;
+
+        asm volatile(
+                "{ .reg .u32 r4;"
+                "cvt.pack.sat.u4.s32.b32   r4, %4, %3, 0;"
+                "cvt.pack.sat.u4.s32.b32   %0, %2, %1, r4;"
+                "}"
+                : "=r"(tmp)
+                : "r"(source[0]), "r"(source[1]), "r"(source[2]),
+                  "r"(source[3]));
+
+        uint16_t out = (tmp & 0xffff);
         return reinterpret_cast<result_type const&>(out);
     }
 
@@ -1129,6 +1183,36 @@ struct subbyte_array_converter<
     result_type operator()(source_type const& s) { return convert(s); }
 };
 
+template <typename T>
+struct subbyte_array_converter<
+        T, float, 4, FloatRoundStyle::round_to_nearest_integer,
+        typename platform::enable_if<
+                platform::is_same<T, int4b_t>::value ||
+                platform::is_same<T, uint4b_t>::value>::type> {
+    using result_type = Array<T, 4>;
+    using source_type = Array<float, 4>;
+
+    CUTLASS_HOST_DEVICE
+    static result_type convert(source_type const& source) {
+        using intermediate_type = Array<int, 4>;
+        intermediate_type intermediate;
+
+        CUTLASS_PRAGMA_UNROLL
+        for (int i = 0; i < 4; ++i) {
+            asm volatile("cvt.rni.s32.f32 %0, %1;"
+                         : "=r"(intermediate[i])
+                         : "f"(source[i]));
+        }
+        NumericArrayConverter<T, int, 4,
+                              FloatRoundStyle::round_to_nearest_integer>
+                convert_vector_;
+        return convert_vector_(intermediate);
+    }
+
+    CUTLASS_HOST_DEVICE
+    result_type operator()(source_type const& s) { return convert(s); }
+};
+
 template <typename T, int N>
 struct subbyte_array_converter<
         T, float, N, FloatRoundStyle::round_to_nearest_integer,
@@ -1178,6 +1262,36 @@ struct subbyte_array_converter<
         fast_converter converter_;
         CUTLASS_PRAGMA_UNROLL
         for (int i = 0; i < 8; ++i) {
+            int intermediate = converter_(
+                    reinterpret_cast<unsigned const&>(source), i * 4);
+            asm volatile("cvt.rn.f32.s32 %0, %1;"
+                         : "=f"(result[i])
+                         : "r"(intermediate));
+        }
+
+        return result;
+    }
+
+    CUTLASS_HOST_DEVICE
+    result_type operator()(source_type const& s) { return convert(s); }
+};
+
+template <typename S>
+struct subbyte_array_converter<
+        float, S, 4, FloatRoundStyle::round_to_nearest_integer,
+        typename platform::enable_if<
+                platform::is_same<S, int4b_t>::value ||
+                platform::is_same<S, uint4b_t>::value>::type> {
+    using result_type = Array<float, 4>;
+    using source_type = Array<S, 4>;
+    using fast_converter = fast_subbyte_converter<4, S::kSigned>;
+
+    CUTLASS_HOST_DEVICE
+    static result_type convert(source_type const& source) {
+        result_type result;
+        fast_converter converter_;
+        CUTLASS_PRAGMA_UNROLL
+        for (int i = 0; i < 4; ++i) {
             int intermediate = converter_(
                     reinterpret_cast<unsigned const&>(source), i * 4);
             asm volatile("cvt.rn.f32.s32 %0, %1;"
@@ -1270,6 +1384,42 @@ struct NumericArrayConverter<uint4b_t, float, N,
     result_type operator()(source_type const& s) { return convert(s); }
 };
 
+template <>
+struct NumericArrayConverter<int4b_t, float, 4,
+                             FloatRoundStyle::round_to_nearest_integer> {
+    using result_type = Array<int4b_t, 4>;
+    using source_type = Array<float, 4>;
+    using underlying_converter = detail::subbyte_array_converter<
+            int4b_t, float, 4, FloatRoundStyle::round_to_nearest_integer>;
+
+    CUTLASS_HOST_DEVICE
+    static result_type convert(source_type const& source) {
+        underlying_converter convert_;
+        return convert_(source);
+    }
+
+    CUTLASS_HOST_DEVICE
+    result_type operator()(source_type const& s) { return convert(s); }
+};
+
+template <>
+struct NumericArrayConverter<uint4b_t, float, 4,
+                             FloatRoundStyle::round_to_nearest_integer> {
+    using result_type = Array<uint4b_t, 4>;
+    using source_type = Array<float, 4>;
+    using underlying_converter = detail::subbyte_array_converter<
+            uint4b_t, float, 4, FloatRoundStyle::round_to_nearest_integer>;
+
+    CUTLASS_HOST_DEVICE
+    static result_type convert(source_type const& source) {
+        underlying_converter convert_;
+        return convert_(source);
+    }
+
+    CUTLASS_HOST_DEVICE
+    result_type operator()(source_type const& s) { return convert(s); }
+};
+
 /// Partial specialization for Array<int4b_t> => Array<float>
 template <int N>
 struct NumericArrayConverter<float, int4b_t, N,
@@ -1301,6 +1451,42 @@ struct NumericArrayConverter<float, uint4b_t, N,
     using source_type = Array<uint4b_t, N>;
     using underlying_converter = detail::subbyte_array_converter<
             float, uint4b_t, N, FloatRoundStyle::round_to_nearest_integer>;
+
+    CUTLASS_HOST_DEVICE
+    static result_type convert(source_type const& source) {
+        underlying_converter convert_;
+        return convert_(source);
+    }
+
+    CUTLASS_HOST_DEVICE
+    result_type operator()(source_type const& s) { return convert(s); }
+};
+
+template <>
+struct NumericArrayConverter<float, int4b_t, 4,
+                             FloatRoundStyle::round_to_nearest_integer> {
+    using result_type = Array<float, 4>;
+    using source_type = Array<int4b_t, 4>;
+    using underlying_converter = detail::subbyte_array_converter<
+            float, int4b_t, 4, FloatRoundStyle::round_to_nearest_integer>;
+
+    CUTLASS_HOST_DEVICE
+    static result_type convert(source_type const& source) {
+        underlying_converter convert_;
+        return convert_(source);
+    }
+
+    CUTLASS_HOST_DEVICE
+    result_type operator()(source_type const& s) { return convert(s); }
+};
+
+template <>
+struct NumericArrayConverter<float, uint4b_t, 4,
+                             FloatRoundStyle::round_to_nearest_integer> {
+    using result_type = Array<float, 4>;
+    using source_type = Array<uint4b_t, 4>;
+    using underlying_converter = detail::subbyte_array_converter<
+            float, uint4b_t, 4, FloatRoundStyle::round_to_nearest_integer>;
 
     CUTLASS_HOST_DEVICE
     static result_type convert(source_type const& source) {

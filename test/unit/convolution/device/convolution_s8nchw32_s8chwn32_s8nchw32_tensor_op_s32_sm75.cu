@@ -25,7 +25,7 @@
  *
  **************************************************************************************************/
 /**
- * \file test/unit/convolution/device/simt_int8_iconv_sm61.cu
+ * \file test/unit/convolution/device/convolution_s8nchw32_s8chwn32_s8nchw32_tensor_op_s32_sm75.cu
  *
  * Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
  *
@@ -143,7 +143,8 @@ TEST(SM75_Device_Convolution_s8_s8_NC32HW32_tensor_op_mmai8816,
                         ElementCompute>,                                   \
                 cutlass::conv::threadblock::                               \
                         ConvolutionFpropTransThreadblockSwizzle,           \
-                2, 16, 16, true, cutlass::arch::OpMultiplyAddSaturate,     \
+                2, 16, 16, cutlass::conv::SpecialOptimizeDesc::NONE,       \
+                cutlass::arch::OpMultiplyAddSaturate,                      \
                 cutlass::conv::ImplicitGemmMode::GEMM_TN, true>;           \
         EXPECT_TRUE(test::convolution::device::TestConvolutionMmaReorderK< \
                     Convolution>());                                       \
@@ -155,4 +156,5 @@ TEST(SM75_Device_Convolution_s8_s8_NC32HW32_tensor_op_mmai8816_reorderK,
     using WarpShape = cutlass::gemm::GemmShape<64, 64, 64>;
     RUN_CONVOLUTION_REORDERK;
 }
+
 ////////////////////////////////////////////////////////////////////////////////

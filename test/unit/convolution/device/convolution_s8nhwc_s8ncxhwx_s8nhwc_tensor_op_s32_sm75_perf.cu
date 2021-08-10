@@ -25,7 +25,7 @@
  *
  **************************************************************************************************/
 /**
- * \file test/unit/convolution/device/convolution_s4nchw64_s4chwn64_s4nchw64_tensor_op_s32_sm75_perf.cu
+ * \file test/unit/convolution/device/convolution_s8nhwc_s8ncxhwx_s8nhwc_tensor_op_s32_sm75_perf.cu
  *
  * Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
  *
@@ -40,8 +40,8 @@
 
 #include <iostream>
 
-#include "cutlass/cutlass.h"
 #include "cutlass/convolution/device/convolution.h"
+#include "cutlass/cutlass.h"
 
 #include "../../common/cutlass_unit_test.h"
 
@@ -56,104 +56,91 @@
 
 ////////////////////////////////////////////////////////////////////////////////
 
-TEST(SM75_Device_Convolution_s4_s4_NC64HW64_tensor_op_mmai8832_perf,
-     128x128x128_64x64x128) {
-    using ElementOutput = cutlass::int4b_t;
-    using ElementAccumulator = int32_t;
-    using ElementCompute = float;
-
-    using Convolution = cutlass::conv::device::Convolution<
-            cutlass::int4b_t, cutlass::layout::TensorNCxHWx<64>, cutlass::int4b_t,
-            cutlass::layout::TensorCxRSKx<64>, ElementOutput,
-            cutlass::layout::TensorNCxHWx<64>, int32_t,
-            cutlass::layout::TensorNCxHWx<64>, int32_t,
-            cutlass::conv::ConvType::kConvolution,
-            cutlass::arch::OpClassTensorOp, cutlass::arch::Sm75,
-            cutlass::gemm::GemmShape<128, 128, 128>,
-            cutlass::gemm::GemmShape<64, 64, 128>,
-            cutlass::gemm::GemmShape<8, 8, 32>,
-            cutlass::epilogue::thread::BiasAddLinearCombinationClamp<
-                    ElementOutput, 16, ElementAccumulator, int32_t,
-                    ElementCompute>,
-            cutlass::conv::threadblock::
-                    ConvolutionFpropNCxHWxThreadblockSwizzle,
-            2, 32, 32>;
-
-    EXPECT_TRUE(test::convolution::device::TestConvolutionPerf<Convolution>(
-            100, 64, true));
-}
-
-TEST(SM75_Device_Convolution_s4_s4_NC64HW64_tensor_op_mmai8832_reorderK_perf,
-     128x128x128_64x64x128) {
-    using ElementOutput = cutlass::int4b_t;
-    using ElementAccumulator = int32_t;
-    using ElementCompute = float;
-
-    using Convolution = cutlass::conv::device::Convolution<
-            cutlass::int4b_t, cutlass::layout::TensorNCxHWx<64>,
-            cutlass::int4b_t, cutlass::layout::TensorCxRSKx<64>, ElementOutput,
-            cutlass::layout::TensorNCxHWx<64>, int32_t,
-            cutlass::layout::TensorNCxHWx<64>, int32_t,
-            cutlass::conv::ConvType::kConvolution,
-            cutlass::arch::OpClassTensorOp, cutlass::arch::Sm75,
-            cutlass::gemm::GemmShape<128, 128, 128>,
-            cutlass::gemm::GemmShape<64, 64, 128>,
-            cutlass::gemm::GemmShape<8, 8, 32>,
-            cutlass::epilogue::thread::BiasAddLinearCombinationClamp<
-                    ElementOutput, 16, ElementAccumulator, int32_t,
-                    ElementCompute>,
-            cutlass::conv::threadblock::ConvolutionFpropTransThreadblockSwizzle,
-            2, 32, 32, cutlass::conv::SpecialOptimizeDesc::NONE,
-            cutlass::arch::OpMultiplyAddSaturate,
-            cutlass::conv::ImplicitGemmMode::GEMM_TN, true>;
-
-    EXPECT_TRUE(
-            (test::convolution::device::TestConvolutionPerf<Convolution, true>(
-                    100, 256, true, false)));
-}
-
-TEST(SM75_Device_Convolution_s4_s4_NC64HW64_tensor_op_mmai8832_reorderK_perf,
-     128x64x64_64x64x64) {
-    using ThreadBlockShape = cutlass::gemm::GemmShape<128, 64, 64>;
-    using WarpShape = cutlass::gemm::GemmShape<64, 64, 64>;
-    using ElementOutput = cutlass::int4b_t;
+TEST(SM75_Device_Convolution_s8_s8_NHWC_tensor_op_mmai8816_reorderK_perf,
+     64x16x32_64x16x32_16) {
+    using ElementOutput = int8_t;
     using ElementAccumulator = int32_t;
     using ElementBias = int32_t;
     using ElementCompute = float;
-    using InstructionShape = cutlass::gemm::GemmShape<8, 8, 32>;
+    using InstructionShape = cutlass::gemm::GemmShape<8, 8, 16>;
+    using ThreadBlockShape = cutlass::gemm::GemmShape<64, 16, 32>;
+    using WarpShape = cutlass::gemm::GemmShape<64, 16, 32>;
     using Convolution = cutlass::conv::device::Convolution<
-            cutlass::int4b_t, cutlass::layout::TensorNCxHWx<64>,
-            cutlass::int4b_t, cutlass::layout::TensorCxRSKx<64>, ElementOutput,
-            cutlass::layout::TensorNCxHWx<64>, int32_t,
-            cutlass::layout::TensorNCxHWx<64>, int32_t,
+            int8_t, cutlass::layout::TensorNHWC, int8_t,
+            cutlass::layout::TensorNCxHWx<16>, ElementOutput,
+            cutlass::layout::TensorNHWC, ElementBias,
+            cutlass::layout::TensorNHWC, ElementAccumulator,
             cutlass::conv::ConvType::kConvolution,
             cutlass::arch::OpClassTensorOp, cutlass::arch::Sm75,
             ThreadBlockShape, WarpShape, InstructionShape,
             cutlass::epilogue::thread::BiasAddLinearCombinationClamp<
-                    ElementOutput, 16, ElementAccumulator, int32_t,
+                    ElementOutput, 4, ElementAccumulator, ElementBias,
                     ElementCompute>,
             cutlass::conv::threadblock::ConvolutionFpropTransThreadblockSwizzle,
-            1, 32, 32, cutlass::conv::SpecialOptimizeDesc::NONE,
+            1, 16, 16, cutlass::conv::SpecialOptimizeDesc::NONE,
             cutlass::arch::OpMultiplyAddSaturate,
             cutlass::conv::ImplicitGemmMode::GEMM_TN, true>;
-    test::convolution::device::Testbed<Convolution, true> testbed;
 
-    using ConvolutionParameter = cutlass::conv::Conv2dProblemSize;
-    std::vector<ConvolutionParameter> args;
-    cutlass::conv::Mode mode = cutlass::conv::Mode::kCrossCorrelation;
+    test::convolution::device::TestDetectionPerf<Convolution, true>(
+            100, 16, true, false, 16);
+}
 
-    args.emplace_back(ConvolutionParameter{16, 92, 160, 64, 64, 3, 3, 92, 160,
-                                           1, 1, 1, 1, 1, 1, mode});
+TEST(SM75_Device_Convolution_s8_s8_NHWC_tensor_op_mmai8816_perf,
+     64x16x32_64x16x32_4) {
+    using ElementOutput = int8_t;
+    using ElementAccumulator = int32_t;
+    using ElementBias = int32_t;
+    using ElementCompute = float;
+    using InstructionShape = cutlass::gemm::GemmShape<8, 8, 16>;
+    using ThreadBlockShape = cutlass::gemm::GemmShape<64, 16, 32>;
+    using WarpShape = cutlass::gemm::GemmShape<64, 16, 32>;
+    using Convolution = cutlass::conv::device::Convolution<
+            int8_t, cutlass::layout::TensorNHWC, int8_t,
+            cutlass::layout::TensorNCxHWx<4>, ElementOutput,
+            cutlass::layout::TensorNHWC, ElementBias,
+            cutlass::layout::TensorNHWC, ElementAccumulator,
+            cutlass::conv::ConvType::kConvolution,
+            cutlass::arch::OpClassTensorOp, cutlass::arch::Sm75,
+            ThreadBlockShape, WarpShape, InstructionShape,
+            cutlass::epilogue::thread::BiasAddLinearCombinationClamp<
+                    ElementOutput, 4, ElementAccumulator, ElementBias,
+                    ElementCompute>,
+            cutlass::conv::threadblock::ConvolutionFpropTransThreadblockSwizzle,
+            1, 4, 4, cutlass::conv::SpecialOptimizeDesc::NONE,
+            cutlass::arch::OpMultiplyAddSaturate,
+            cutlass::conv::ImplicitGemmMode::GEMM_TN, false>;
 
-    double problem_gamma[] = {0.0};
-    for (auto arg : args) {
-        for (auto gamma : problem_gamma) {
-            testbed.perf(arg, cutlass::from_real<ElementCompute>(0.01234567),
-                         cutlass::from_real<ElementCompute>(1.07654321),
-                         cutlass::from_real<ElementCompute>(gamma), 1000,
-                         false);
-        }
-    }
+    test::convolution::device::TestDetectionPerf<Convolution>(100, 16, true,
+                                                              false, 4);
+}
+
+TEST(SM75_Device_Convolution_s8_s8_NHWC_tensor_op_mmai8816_reorderK_perf,
+     128x32x32_64x32x32_16) {
+    using ElementOutput = int8_t;
+    using ElementAccumulator = int32_t;
+    using ElementBias = int32_t;
+    using ElementCompute = float;
+    using InstructionShape = cutlass::gemm::GemmShape<8, 8, 16>;
+    using ThreadBlockShape = cutlass::gemm::GemmShape<128, 32, 32>;
+    using WarpShape = cutlass::gemm::GemmShape<64, 32, 32>;
+    using Convolution = cutlass::conv::device::Convolution<
+            int8_t, cutlass::layout::TensorNHWC, int8_t,
+            cutlass::layout::TensorNCxHWx<16>, ElementOutput,
+            cutlass::layout::TensorNHWC, ElementBias,
+            cutlass::layout::TensorNHWC, ElementAccumulator,
+            cutlass::conv::ConvType::kConvolution,
+            cutlass::arch::OpClassTensorOp, cutlass::arch::Sm75,
+            ThreadBlockShape, WarpShape, InstructionShape,
+            cutlass::epilogue::thread::BiasAddLinearCombinationClamp<
+                    ElementOutput, 8, ElementAccumulator, ElementBias,
+                    ElementCompute>,
+            cutlass::conv::threadblock::ConvolutionFpropTransThreadblockSwizzle,
+            1, 16, 16, cutlass::conv::SpecialOptimizeDesc::NONE,
+            cutlass::arch::OpMultiplyAddSaturate,
+            cutlass::conv::ImplicitGemmMode::GEMM_TN, true>;
+
+    test::convolution::device::TestDetectionPerf<Convolution, true>(
+            100, 16, true, false, 32);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

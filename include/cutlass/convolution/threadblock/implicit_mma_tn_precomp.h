@@ -213,7 +213,6 @@ public:
             TransformFilter transform_filter =
                     TransformFilter()) {  ///< transformation applied to Filter
                                           ///< Tensor fragment
-
         //
         // Prologue
         //

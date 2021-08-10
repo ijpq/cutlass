@@ -143,13 +143,13 @@ CUTLASS_HOST_DEVICE void compute_offset_dgrad(int* constant_offset_, int fh_,
 }  // namespace detail
 
 template <typename Shape, typename Element, typename Layout, typename ThreadMap,
-          typename TileMap, bool NeedLoadFromConstMem = true>
+          typename TileMap>
 class DgradPrecompParams;
 
 template <typename Shape_, typename Element_, typename ThreadMap_,
           typename TileMap_, int Interleaved>
 class DgradPrecompParams<Shape_, Element_, layout::TensorNCxHWx<Interleaved>,
-                         ThreadMap_, TileMap_, true> {
+                         ThreadMap_, TileMap_> {
 public:
     static int const kInterleaved = Interleaved;
     using Shape = Shape_;
@@ -231,81 +231,9 @@ public:
     }
 };
 
-template <typename Shape_, typename Element_, typename ThreadMap_,
-          typename TileMap_, int Interleaved>
-class DgradPrecompParams<Shape_, Element_, layout::TensorNCxHWx<Interleaved>,
-                         ThreadMap_, TileMap_, false> {
-public:
-    static int const kInterleaved = Interleaved;
-    using Shape = Shape_;
-    using Element = Element_;
-    using Layout = layout::TensorNCxHWx<kInterleaved>;
-    using ThreadMap = ThreadMap_;
-    using TileMap = TileMap_;
-    using ExtraParam = platform::none_type;
-
-    using ShortIndex = int8_t;
-    using Index = typename Layout::Index;
-    using LongIndex = typename Layout::LongIndex;
-    using TensorCoord = typename Layout::TensorCoord;
-
-    /// Logical layout
-    using LogicalLayout = layout::RowMajor;
-    /// Logical tensor coord
-    using LogicalCoord = typename LogicalLayout::TensorCoord;
-
-    /// Used for converting tensor coordinates into pointer offset
-    Layout layout_;
-    /// amount (in byte) to increment pointer to move to next access along
-    /// strided dimension
-    LongIndex inc_strided_;
-    /// amount (in byte) to increment pointer from last access to first
-    /// access of next tile
-    LongIndex inc_next_;
-    LongIndex inc_iterations_;
-
-    /// Parameters used for mapping logical coordinates to physical
-    /// coordinates
-    TileMap tile_map_;
-    Index pad_h_, pad_w_;
-    FastDivmod stride_h_div_mod_;
-    FastDivmod stride_w_div_mod_;
-    Index hi_, wi_, n_;
-
-    CUTLASS_HOST_DEVICE
-    DgradPrecompParams() : layout_(Layout()), tile_map_(TileMap()) {}
-
-    /// Construct the Params object given a pitch-linear tensor's layout
-    CUTLASS_HOST_DEVICE
-    DgradPrecompParams(Layout const& layout,
-                       Conv2dProblemSize const& problem_size,
-                       ExtraParam const& /* extra_param */)
-            : layout_(layout),
-              tile_map_(
-                      TileMap(problem_size.H * problem_size.W, problem_size.W)),
-              stride_h_div_mod_(problem_size.stride_h),
-              stride_w_div_mod_(problem_size.stride_w),
-              pad_h_(problem_size.pad_h),
-              pad_w_(problem_size.pad_w),
-              hi_(problem_size.P),
-              wi_(problem_size.Q),
-              n_(problem_size.N) {
-        int stride = layout_.stride()[TileMap::kStrideAxis];
-        inc_strided_ = (LongIndex(stride) * ThreadMap::Delta::kStrided) *
-                       sizeof_bits<Element>::value / 8;
-
-        inc_iterations_ = LongIndex(ThreadMap::Iterations::kStrided - 1) *
-                          ThreadMap::Delta::kStrided * LongIndex(stride) *
-                          sizeof_bits<Element>::value / 8;
-
-        inc_next_ = Shape::kStrided * LongIndex(stride) *
-                            sizeof_bits<Element>::value / 8 -
-                    inc_iterations_;
-    }
-};
-
 template <typename Shape, typename Element, typename Layout, typename ThreadMap,
-          int AccessSize, typename TileMap, bool NeedLoadFromConstMem = true>
+          int AccessSize, typename TileMap,
+          SpecialOptimizeDesc SpecialOpt = SpecialOptimizeDesc::NONE>
 class Conv2dTileSrcIteratorDgradPrecomp;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -317,10 +245,11 @@ class Conv2dTileSrcIteratorDgradPrecomp;
 ///            MaskedTileIteratorConcept
 ///
 template <typename Shape_, typename Element_, typename ThreadMap_,
-          int Interleaved, int AccessSize, typename TileMap_>
+          int Interleaved, int AccessSize, typename TileMap_,
+          SpecialOptimizeDesc SpecialOpt>
 class Conv2dTileSrcIteratorDgradPrecomp<
         Shape_, Element_, layout::TensorNCxHWx<Interleaved>, ThreadMap_,
-        AccessSize, TileMap_, true> {
+        AccessSize, TileMap_, SpecialOpt> {
 public:
     using Shape = layout::PitchLinearShape<Shape_::kColumn * Interleaved,
                                            Shape_::kRow / Interleaved>;
@@ -401,7 +330,7 @@ public:
     /// Parameters object is precomputed state and is host-constructible
     using Params = DgradPrecompParams<Shape, Element,
                                       layout::TensorNCxHWx<kInterleaved>,
-                                      ThreadMap, TileMap, true>;
+                                      ThreadMap, TileMap>;
 
 private:
     //
@@ -604,10 +533,21 @@ public:
 
                     int mod_h = 0, mod_w = 0;
                     Index ih, iw;
-                    params_.stride_h_div_mod_(
-                            ih, mod_h, oh[access_idx] + params_.pad_h_ - fh);
-                    params_.stride_w_div_mod_(
-                            iw, mod_w, ow[access_idx] + params_.pad_w_ - fw);
+
+                    if (SpecialOpt ==
+                        SpecialOptimizeDesc::DECONV_DOUBLE_UPSAMPLING) {
+                        ih = (oh[access_idx] + params_.pad_h_ - fh) >> 1;
+                        iw = (ow[access_idx] + params_.pad_w_ - fw) >> 1;
+                        mod_h = (oh[access_idx] + params_.pad_h_ - fh) & 0x1;
+                        mod_w = (ow[access_idx] + params_.pad_w_ - fw) & 0x1;
+                    } else {
+                        params_.stride_h_div_mod_(
+                                ih, mod_h,
+                                oh[access_idx] + params_.pad_h_ - fh);
+                        params_.stride_w_div_mod_(
+                                iw, mod_w,
+                                ow[access_idx] + params_.pad_w_ - fw);
+                    }
 
                     bool guard = mask_.predicates[access_idx] &&
                                  ((ih >= 0) && (ih < params_.hi_) &&
@@ -640,493 +580,12 @@ public:
     CUTLASS_DEVICE
     void load(Fragment& frag) { load_with_pointer_offset(frag, 0); }
 
-    /// Store a fragment to memory
-    CUTLASS_DEVICE
-    void store_with_pointer_offset(Fragment const& frag, Index pointer_offset) {
-        store_with_byte_offset(
-                frag, pointer_offset * sizeof_bits<Element>::value / 8);
-    }
-
-    /// Store a fragment to memory
-    CUTLASS_DEVICE
-    void store_with_byte_offset(Fragment const& frag, LongIndex byte_offset) {
-        AccessType* frag_ptr = reinterpret_cast<AccessType*>(&frag);
-
-        CUTLASS_PRAGMA_UNROLL
-        for (int s = 0; s < ThreadMap::Iterations::kStrided; ++s) {
-            auto ptr_ = reinterpret_cast<ShortIndex const*>(
-                    params_.constant_offset_ +
-                    2 * (constant_offset_ + s * ThreadMap::Delta::kStrided) +
-                    1);
-            ShortIndex fh = ptr_[0];
-            ShortIndex fw = ptr_[1];
-
-            CUTLASS_PRAGMA_UNROLL
-            for (int c = 0; c < ThreadMap::Iterations::kContiguous; ++c) {
-                CUTLASS_PRAGMA_UNROLL
-                for (int v = 0; v < kAccessesPerVector; ++v) {
-                    int idx = v +
-                              kAccessesPerVector *
-                                      (c +
-                                       s * ThreadMap::Iterations::kContiguous);
-                    int access_idx = v + kAccessesPerVector * c;
-
-                    int residual = 0;
-                    Index ih, iw;
-                    params_.stride_h_div_mod_(
-                            ih, residual, oh[access_idx] + params_.pad_h_ - fh);
-                    params_.stride_w_div_mod_(
-                            iw, residual, ow[access_idx] + params_.pad_w_ - fw);
-
-                    bool guard = mask_.predicates[access_idx] &&
-                                 ((ih >= 0) && (ih < params_.hi_) &&
-                                  (iw >= 0) && (iw < params_.wi_));
-                    if (is_residue_tile_) {
-                        guard = guard && s * ThreadMap::Delta::kStrided <
-                                                 residue_extent_;
-                    }
-
-                    TensorCoord coord{0, ih, iw, 0};
-
-                    char const* byte_ptr =
-                            reinterpret_cast<char const*>(
-                                    pointer_[access_idx] +
-                                    params_.layout_(coord) + strided_[s]) +
-                            byte_offset;
-
-                    AccessType const* access_ptr =
-                            reinterpret_cast<AccessType const*>(byte_ptr);
-
-                    cutlass::arch::global_store<AccessType, sizeof(AccessType)>(
-                            frag_ptr[idx], access_ptr, guard);
-                }
-            }
-        }
-    }
-
-    /// Store a fragment to memory
-    CUTLASS_DEVICE
-    void store(Fragment const& frag) { store_with_pointer_offset(frag, 0); }
-
     static Status can_implement(Conv2dProblemSize& problem_size) {
         if (problem_size.mode != Mode::kCrossCorrelation) {
             return Status::kErrorInvalidProblem;
         }
 
         if (problem_size.R * problem_size.S > Params::kMaxFilterPixels) {
-            return Status::kErrorInvalidProblem;
-        }
-
-        if (problem_size.dilation_h != 1 || problem_size.dilation_w != 1) {
-            return Status::kErrorInvalidProblem;
-        }
-
-        return Status::kSuccess;
-    }
-};
-
-////////////////////////////////////////////////////////////////////////////////
-
-/// Specialization of Conv2dTileSrcIteratorDgradPrecomp for
-/// TensorNCxHWx<Interleaved> Layout. Satisfies: ForwardTileIteratorConcept |
-///            ReadableContiguousTileIteratorConcept |
-///            WriteableContiguousTileIteratorConcept |
-///            MaskedTileIteratorConcept
-///
-template <typename Shape_, typename Element_, typename ThreadMap_,
-          int Interleaved, int AccessSize, typename TileMap_>
-class Conv2dTileSrcIteratorDgradPrecomp<
-        Shape_, Element_, layout::TensorNCxHWx<Interleaved>, ThreadMap_,
-        AccessSize, TileMap_, false> {
-public:
-    static int const kInterleaved = Interleaved;
-    using Shape = layout::PitchLinearShape<Shape_::kColumn * kInterleaved,
-                                           Shape_::kRow / kInterleaved>;
-    using Element = Element_;
-    using Layout = layout::TensorNCxHWx<kInterleaved>;
-    using ThreadMap = ThreadMap_;
-    using TileMap = TileMap_;
-
-    using Index = typename Layout::Index;
-    using LongIndex = typename Layout::LongIndex;
-
-    using TensorRef = TensorRef<Element, Layout>;
-    using TensorView = TensorView<Element, Layout>;
-    using TensorCoord = typename Layout::TensorCoord;
-
-    /// Logical layout
-    using LogicalLayout = layout::RowMajor;
-
-    /// Logical tensor coord
-    using LogicalCoord = typename LogicalLayout::TensorCoord;
-
-    using Pointer = Element*;
-
-    /// Type used for internal memory accesses
-    using AccessType =
-            AlignedArray<Element, AccessSize,
-                         (AccessSize * sizeof_bits<Element>::value / 8)>;
-
-    static int const kAccessesPerVector =
-            ThreadMap::kElementsPerAccess / AccessType::kElements;
-
-    static_assert(!(ThreadMap::kElementsPerAccess % AccessType::kElements),
-                  "Vectors implied by the thread map must be divisible by the "
-                  "access type.");
-    static_assert(AccessType::kElements <= kInterleaved,
-                  "Access size cannot be greater than interleaving quantity");
-
-    static int const kPredicatesPerByte = 4;
-    static int const kPredicatesPerWord = 4 * kPredicatesPerByte;
-
-    static int const kContiguousCount =
-            ThreadMap::Iterations::kContiguous * kAccessesPerVector;
-
-    /// Number of 32b words containing predicates
-    static int const kPredicateByteCount =
-            (kContiguousCount + kPredicatesPerByte - 1) / kPredicatesPerByte;
-    static int const kPredicateWordCount = (kPredicateByteCount + 3) / 4;
-
-    static unsigned const kPredicateMask = (1u << kPredicatesPerByte) - 1u;
-
-    static_assert(kPredicateWordCount <= 4, "Too many predicates.");
-
-    /// Predicate vector stores mask to guard accesses
-    using Mask = Array<uint32_t, kPredicateWordCount>;
-
-    /// Fragment object to be loaded or stored
-    using Fragment =
-            cutlass::Array<Element, ThreadMap::Iterations::kCount *
-                                            ThreadMap::kElementsPerAccess>;
-
-    using Params = DgradPrecompParams<Shape, Element,
-                                      layout::TensorNCxHWx<kInterleaved>,
-                                      ThreadMap, TileMap, false>;
-
-private:
-    //
-    // Data members
-    //
-
-    /// Parameters object with precomputed internal state
-    Params const& params_;
-
-    /// Internal pointer to first access of tile
-    Pointer pointer_[kContiguousCount];
-
-    /// Array of boolean values to contain steady-state predicates
-    /// Guard predicates
-    uint32_t predicates_[kPredicateWordCount];
-
-    /// Offset to the first steady-state tile
-    Index residue_offset_;
-
-    Index residue_extent_;
-
-    /// Used for out-of-order visitation
-    bool is_residue_tile_;
-
-private:
-    CUTLASS_DEVICE
-    void initialize_predicate_and_pointers_(Pointer pointer,
-                                            LogicalCoord const& thread_offset) {
-        CUTLASS_PRAGMA_UNROLL
-        for (int i = 0; i < kPredicateWordCount; ++i) {
-            predicates_[i] = 0u;
-        }
-
-        CUTLASS_PRAGMA_UNROLL
-        for (int access_idx = 0; access_idx < kContiguousCount; ++access_idx) {
-            int c = access_idx / kAccessesPerVector;
-            int v = access_idx % kAccessesPerVector;
-
-            Index col_offset = c * ThreadMap::Delta::kContiguous +
-                               v * AccessType::kElements +
-                               thread_offset.column();
-            TensorCoord coord = params_.tile_map_(
-                    LogicalCoord{thread_offset.row() * kInterleaved,
-                                 col_offset / kInterleaved});
-            int mod_h = 0, mod_w = 0;
-            params_.stride_h_div_mod_(coord.h(), mod_h,
-                                      coord.h() + params_.pad_h_);
-            params_.stride_w_div_mod_(coord.w(), mod_w,
-                                      coord.w() + params_.pad_w_);
-
-            pointer_[access_idx] = pointer + params_.layout_(coord) +
-                                   col_offset % kInterleaved;
-            bool guard = coord.n() < params_.n_ && coord.h() >= 0 &&
-                         coord.h() < params_.hi_ && coord.w() >= 0 &&
-                         coord.w() < params_.wi_ && mod_h == 0 && mod_w == 0;
-            int word_idx = access_idx / kPredicatesPerWord;
-            int residual = access_idx % kPredicatesPerWord;
-            int byte_idx = residual / kPredicatesPerByte;
-            int bit_idx = residual % kPredicatesPerByte;
-            predicates_[word_idx] |=
-                    (unsigned(guard) << (byte_idx * 8 + bit_idx));
-        }
-    }
-
-public:
-    /// Constructs a TileIterator from its precomputed state, threadblock
-    /// offset, and thread ID
-    CUTLASS_HOST_DEVICE
-    Conv2dTileSrcIteratorDgradPrecomp(
-            /// Precomputed parameters object
-            Params const& params,
-            /// Pointer to start of tensor
-            Pointer pointer,
-            /// Extent of tensor
-            LogicalCoord extent,
-            /// ID of each participating thread
-            int thread_id,
-            /// Initial offset of threadblock
-            LogicalCoord const& threadblock_offset)
-            : params_(params), is_residue_tile_(true) {
-        residue_offset_ = (extent.row() / kInterleaved -
-                           threadblock_offset.row() / kInterleaved) %
-                          Shape::kStrided;
-        if (!residue_offset_) {
-            residue_offset_ = Shape::kStrided;
-        }
-
-        residue_extent_ =
-                min(threadblock_offset.row() / kInterleaved + residue_offset_,
-                    extent.row() / kInterleaved);
-
-        auto thread_offset_ = ThreadMap::initial_offset(thread_id);
-        // Per-thread offset in logical coordinates of tensor
-        LogicalCoord thread_offset =
-                LogicalCoord(threadblock_offset.row() / kInterleaved,
-                             threadblock_offset.column() * kInterleaved) +
-                LogicalCoord(thread_offset_.strided(),
-                             thread_offset_.contiguous());
-
-        // Intialize internal pointers
-        initialize_predicate_and_pointers_(pointer, thread_offset);
-
-        residue_extent_ = residue_extent_ - thread_offset.row();
-    }
-
-    /// Construct a Conv2dTileSrcIteratorDgradPrecomp with zero threadblock
-    /// offset
-    CUTLASS_HOST_DEVICE
-    Conv2dTileSrcIteratorDgradPrecomp(
-            Params const& params,  ///< Precomputed parameters object
-            Pointer pointer,       ///< Pointer to start of tensor
-            LogicalCoord extent,   ///< Extent of tensor
-            int thread_id          ///< ID of each participating thread
-            )
-            : Conv2dTileSrcIteratorDgradPrecomp(params, pointer, extent,
-                                                thread_id, make_Coord(0, 0)) {}
-
-    /// Adds a pointer offset in units of Element
-    CUTLASS_HOST_DEVICE
-    void add_pointer_offset(LongIndex pointer_offset) {
-        CUTLASS_PRAGMA_UNROLL
-        for (int access_idx = 0; access_idx < kContiguousCount; ++access_idx) {
-            pointer_[access_idx] +=
-                    sizeof_bits<Element>::value * pointer_offset / 8;
-        }
-    }
-
-    /// Advances to the next tile in memory.
-    ///
-    /// The first time this method is called, predicates are updated, and the
-    /// iterator's internal pointer is reverted to the first "steady state"
-    /// tile. Subsequent calls are lightweight and must only update the internal
-    /// pointer.
-    CUTLASS_HOST_DEVICE
-    Conv2dTileSrcIteratorDgradPrecomp& operator++() {
-        if (is_residue_tile_) {
-            add_pointer_offset(residue_offset_ *
-                               params_.layout_.stride()[TileMap::kStrideAxis]);
-            CUTLASS_PRAGMA_UNROLL
-            for (int access_idx = 0; access_idx < kContiguousCount;
-                 ++access_idx) {
-                pointer_[access_idx] -= params_.inc_iterations_;
-            }
-        } else {
-            CUTLASS_PRAGMA_UNROLL
-            for (int access_idx = 0; access_idx < kContiguousCount;
-                 ++access_idx) {
-                pointer_[access_idx] += params_.inc_next_;
-            }
-        }
-        is_residue_tile_ = false;
-        return *this;
-    }
-
-    /// Advances to the next tile in memory.
-    ///
-    /// The first time this method is called, predicates are updated, and the
-    /// iterator's internal pointer is reverted to the first "steady state"
-    /// tile. Subsequent calls are lightweight and must only update the internal
-    /// pointer.
-    CUTLASS_HOST_DEVICE
-    Conv2dTileSrcIteratorDgradPrecomp operator++(int) {
-        Conv2dTileSrcIteratorDgradPrecomp self(*this);
-        operator++();
-        return self;
-    }
-
-    /// Clears the predicate set efficiently
-    CUTLASS_HOST_DEVICE
-    void clear_mask() {
-        CUTLASS_PRAGMA_UNROLL
-        for (int i = 0; i < kPredicateWordCount; ++i) {
-            predicates_[i] = 0u;
-        }
-    }
-
-    /// Clears the predicate set efficiently
-    CUTLASS_HOST_DEVICE
-    void enable_mask() {
-        CUTLASS_PRAGMA_UNROLL
-        for (int i = 0; i < kPredicateWordCount; ++i) {
-            predicates_[i] = 0xffffffff;
-        }
-    }
-
-    /// Sets the predicate mask, overriding value stored in predicate iterator
-    CUTLASS_HOST_DEVICE
-    void set_mask(Mask const& mask) {
-        CUTLASS_PRAGMA_UNROLL
-        for (int i = 0; i < kPredicateWordCount; ++i) {
-            predicates_[i] = mask[i];
-        }
-    }
-
-    /// Gets the mask
-    CUTLASS_HOST_DEVICE
-    void get_mask(Mask& mask) {
-        CUTLASS_PRAGMA_UNROLL
-        for (int i = 0; i < kPredicateWordCount; ++i) {
-            mask[i] = predicates_[i];
-        }
-    }
-
-    CUTLASS_DEVICE
-    void load_with_pointer_offset(Fragment& frag, Index pointer_offset) {
-        load_with_byte_offset(frag,
-                              pointer_offset * sizeof_bits<Element>::value / 8);
-    }
-
-    /// Loads a fragment from memory
-    CUTLASS_DEVICE
-    void load_with_byte_offset(Fragment& frag, LongIndex byte_offset) {
-        AccessType* frag_ptr = reinterpret_cast<AccessType*>(&frag);
-        CUTLASS_PRAGMA_UNROLL
-        for (int s = 0; s < ThreadMap::Iterations::kStrided; ++s) {
-            CUTLASS_PRAGMA_UNROLL
-            for (int c = 0; c < ThreadMap::Iterations::kContiguous; ++c) {
-                CUTLASS_PRAGMA_UNROLL
-                for (int v = 0; v < kAccessesPerVector; ++v) {
-                    int idx = v +
-                              kAccessesPerVector *
-                                      (c +
-                                       s * ThreadMap::Iterations::kContiguous);
-                    int access_idx = v + kAccessesPerVector * c;
-                    int word_idx = access_idx / kPredicatesPerWord;
-                    int residual = access_idx % kPredicatesPerWord;
-                    int byte_idx = residual / kPredicatesPerByte;
-                    int bit_idx = residual % kPredicatesPerByte;
-                    bool guard = ((predicates_[word_idx] &
-                                   (1u << (byte_idx * 8 + bit_idx))) != 0);
-                    if (is_residue_tile_) {
-                        guard = guard && s * ThreadMap::Delta::kStrided <
-                                                 residue_extent_;
-                    }
-
-                    char const* byte_ptr = reinterpret_cast<char const*>(
-                                                   pointer_[access_idx]) +
-                                           byte_offset;
-
-                    AccessType const* access_ptr =
-                            reinterpret_cast<AccessType const*>(byte_ptr);
-
-                    cutlass::arch::global_load<AccessType, sizeof(AccessType)>(
-                            frag_ptr[idx], access_ptr, guard);
-                }
-            }
-            if (s < ThreadMap::Iterations::kStrided - 1) {
-                CUTLASS_PRAGMA_UNROLL
-                for (int access_idx = 0; access_idx < kContiguousCount;
-                     ++access_idx) {
-                    pointer_[access_idx] += params_.inc_strided_;
-                }
-            }
-        }
-    }
-
-    /// Loads a fragment from memory
-    CUTLASS_DEVICE
-    void load(Fragment& frag) { load_with_pointer_offset(frag, 0); }
-
-    /// Store a fragment to memory
-    CUTLASS_DEVICE
-    void store_with_pointer_offset(Fragment const& frag, Index pointer_offset) {
-        store_with_byte_offset(
-                frag, pointer_offset * sizeof_bits<Element>::value / 8);
-    }
-
-    /// Store a fragment to memory
-    CUTLASS_DEVICE
-    void store_with_byte_offset(Fragment const& frag, LongIndex byte_offset) {
-        AccessType* frag_ptr = reinterpret_cast<AccessType*>(&frag);
-
-        CUTLASS_PRAGMA_UNROLL
-        for (int s = 0; s < ThreadMap::Iterations::kStrided; ++s) {
-            CUTLASS_PRAGMA_UNROLL
-            for (int c = 0; c < ThreadMap::Iterations::kContiguous; ++c) {
-                CUTLASS_PRAGMA_UNROLL
-                for (int v = 0; v < kAccessesPerVector; ++v) {
-                    int idx = v +
-                              kAccessesPerVector *
-                                      (c +
-                                       s * ThreadMap::Iterations::kContiguous);
-                    int access_idx = v + kAccessesPerVector * c;
-                    int word_idx = access_idx / kPredicatesPerWord;
-                    int residual = access_idx % kPredicatesPerWord;
-                    int byte_idx = residual / kPredicatesPerByte;
-                    int bit_idx = residual % kPredicatesPerByte;
-                    bool guard = ((predicates_[word_idx] &
-                                   (1u << (byte_idx * 8 + bit_idx))) != 0);
-                    if (is_residue_tile_) {
-                        guard = guard && s * ThreadMap::Delta::kStrided <
-                                                 residue_extent_;
-                    }
-
-                    char const* byte_ptr = reinterpret_cast<char const*>(
-                                                   pointer_[access_idx]) +
-                                           byte_offset;
-
-                    AccessType const* access_ptr =
-                            reinterpret_cast<AccessType const*>(byte_ptr);
-
-                    cutlass::arch::global_store<AccessType, sizeof(AccessType)>(
-                            frag_ptr[idx], access_ptr, guard);
-                }
-            }
-            if (s < ThreadMap::Iterations::kStrided - 1) {
-                CUTLASS_PRAGMA_UNROLL
-                for (int access_idx = 0; access_idx < kContiguousCount;
-                     ++access_idx) {
-                    pointer_[access_idx] += params_.inc_strided_;
-                }
-            }
-        }
-    }
-
-    /// Store a fragment to memory
-    CUTLASS_DEVICE
-    void store(Fragment const& frag) { store_with_pointer_offset(frag, 0); }
-
-    static Status can_implement(Conv2dProblemSize& problem_size) {
-        if (problem_size.mode != Mode::kCrossCorrelation) {
-            return Status::kErrorInvalidProblem;
-        }
-
-        if (problem_size.R != 1 || problem_size.S != 1) {
             return Status::kErrorInvalidProblem;
         }
 

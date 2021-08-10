@@ -840,6 +840,8 @@ template <
         typename WarpShape_,
         /// Access granularity of Src Tensor in units of elements
         int kAlignmentSrc,
+        /// Layout of filter
+        typename LayoutFilter_,
         /// Access granularity of Filter Tensor in units of elements
         int kAlignmentFilter,
         /// Data type of accumulator
@@ -852,8 +854,7 @@ template <
         typename Operator_>
 struct DefaultMmaCore<Shape_, WarpShape_, gemm::GemmShape<8, 8, 32>,
                       integer_subbyte<4, Signed>, layout::TensorNHWC,
-                      kAlignmentSrc, int4b_t,
-                      layout::TensorNCxHWx<kAlignmentFilter>, kAlignmentFilter,
+                      kAlignmentSrc, int4b_t, LayoutFilter_, kAlignmentFilter,
                       ElementDst_, LayoutDst_, arch::OpClassTensorOp, Stages,
                       Operator_, false, ImplicitGemmMode::GEMM_TN> {
     using Shape = Shape_;
@@ -862,7 +863,138 @@ struct DefaultMmaCore<Shape_, WarpShape_, gemm::GemmShape<8, 8, 32>,
     using ElementSrc = integer_subbyte<4, Signed>;
     using LayoutSrc = layout::TensorNHWC;
     using ElementFilter = int4b_t;
-    using LayoutFilter = layout::TensorNCxHWx<kAlignmentFilter>;
+    using LayoutFilter = LayoutFilter_;
+    using ElementDst = ElementDst_;
+    using LayoutDst = LayoutDst_;
+    using OperatorClass = arch::OpClassTensorOp;
+    static int const PartitionsK = Shape::kK / WarpShape::kK;
+    static_assert(PartitionsK == 1,
+                  "Split K algorithm for convolution operator is disabled");
+
+    using WarpCount = gemm::GemmShape<Shape::kM / WarpShape::kM,
+                                      Shape::kN / WarpShape::kN, PartitionsK>;
+
+    /// Default Operator
+    using Operator = Operator_;
+
+    /// Number of threads per warp
+    static int const kWarpSize =
+            gemm::warp::WarpSize<arch::OpClassTensorOp>::value;
+
+    /// Number of threads total
+    static int const kThreads = WarpCount::kCount * kWarpSize;
+
+    /// Size of a threadblock-scoped access
+    static int const kAccessSizeInBits = 128;
+
+    // Warp thread arrangement
+    static int const kWarpThreadArrangementContiguousA =
+            Shape::kK / (kAccessSizeInBits / sizeof_bits<ElementSrc>::value);
+
+    static int const kWarpThreadArrangementStridedA =
+            kWarpSize / kWarpThreadArrangementContiguousA;
+
+    static int const kWarpThreadArrangementContiguousB =
+            Shape::kK / (kAccessSizeInBits / sizeof_bits<ElementSrc>::value);
+
+    static int const kWarpThreadArrangementStridedB =
+            kWarpSize / kWarpThreadArrangementContiguousB;
+
+    //
+    // Shared memory layouts
+    //
+
+    using SmemLayoutSrc = layout::RowMajorTensorOpMultiplicandCrosswise<
+            sizeof_bits<ElementSrc>::value, Shape::kK>;
+
+    // Shared memory layout
+    using SmemLayoutFilter = layout::ColumnMajorTensorOpMultiplicandCrosswise<
+            sizeof_bits<ElementFilter>::value, Shape::kK>;
+
+    //
+    // Iterators to write to shared memory
+    //
+
+    /// ThreadMap of iterator A
+    using IteratorThreadMapSrc = PitchLinearWarpRakedThreadMapOpt<
+            layout::PitchLinearShape<Shape::kK, Shape::kM>, kThreads,
+            layout::PitchLinearShape<kWarpThreadArrangementContiguousA,
+                                     kWarpThreadArrangementStridedA>,
+            kAccessSizeInBits / sizeof_bits<ElementSrc>::value>;
+
+    /// Shared memory iterator to A operand
+    using SmemIteratorSrc = transform::threadblock::RegularTileIterator<
+            MatrixShape<Shape::kM, Shape::kK>, ElementSrc, SmemLayoutSrc, 0,
+            IteratorThreadMapSrc>;
+
+    /// ThreadMap of iterator B
+    using IteratorThreadMapFilter = PitchLinearWarpRakedThreadMapOpt<
+            layout::PitchLinearShape<Shape::kK, Shape::kN>, kThreads,
+            layout::PitchLinearShape<kWarpThreadArrangementContiguousB,
+                                     kWarpThreadArrangementStridedB>,
+            kAccessSizeInBits / sizeof_bits<ElementFilter>::value>;
+
+    /// Shared memory iterator to B operand
+    using SmemIteratorFilter = transform::threadblock::RegularTileIterator<
+            MatrixShape<Shape::kK, Shape::kN>, ElementFilter, SmemLayoutFilter,
+            1, IteratorThreadMapFilter>;
+
+    //
+    // Warp-level matrix multiply operator
+    //
+
+    // Define the warp-level tensor op
+    using MmaTensorOp = typename cutlass::gemm::warp::DefaultMmaTensorOp<
+            WarpShape, InstructionShape, ElementSrc, SmemLayoutSrc,
+            ElementFilter, SmemLayoutFilter, ElementDst, layout::RowMajor,
+            Operator, WarpCount::kK>::Type;
+
+    /// Policy used to define MmaPipelined
+    using MmaPolicy =
+            gemm::threadblock::MmaPolicy<MmaTensorOp, MatrixShape<0, 0>,
+                                         MatrixShape<0, 0>, WarpCount::kK>;
+};
+
+/// Partial specialization:
+///
+///
+///   Src Tensor    : layout::TensorNHWC
+///   Filter Tensor : layout::TensorNCxHWx<AccessSize>
+///   Operator      : TensorOp class, for mma i8816
+///
+/// This uses the default warp-level operator given tile sizes
+template <
+        /// Shape of threadblock-scoped matrix multiply operator (concept:
+        /// GemmShape)
+        typename Shape_,
+        /// Shape of warp-level matrix multiply operator (concept: GemmShape)
+        typename WarpShape_,
+        /// Access granularity of Src Tensor in units of elements
+        int kAlignmentSrc,
+        /// Layout of filter
+        typename LayoutFilter_,
+        /// Access granularity of Filter Tensor in units of elements
+        int kAlignmentFilter,
+        /// Data type of accumulator
+        typename ElementDst_,
+        /// Layout of accumulator
+        typename LayoutDst_,
+        /// Number of stages used in the pipelined mainloop
+        int Stages,
+        /// Operation performed by Convolution
+        typename Operator_>
+struct DefaultMmaCore<Shape_, WarpShape_, gemm::GemmShape<8, 8, 16>, int8_t,
+                      layout::TensorNHWC, kAlignmentSrc, int8_t, LayoutFilter_,
+                      kAlignmentFilter, ElementDst_, LayoutDst_,
+                      arch::OpClassTensorOp, Stages, Operator_, false,
+                      ImplicitGemmMode::GEMM_TN> {
+    using Shape = Shape_;
+    using WarpShape = WarpShape_;
+    using InstructionShape = gemm::GemmShape<8, 8, 16>;
+    using ElementSrc = int8_t;
+    using LayoutSrc = layout::TensorNHWC;
+    using ElementFilter = int8_t;
+    using LayoutFilter = LayoutFilter_;
     using ElementDst = ElementDst_;
     using LayoutDst = LayoutDst_;
     using OperatorClass = arch::OpClassTensorOp;

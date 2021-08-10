@@ -25,7 +25,8 @@
  *
  **************************************************************************************************/
 /**
- * \file test/unit/convolution/device/simt_int8_iconv_sm61.cu
+ * \file
+ * test/unit/convolution/device/convolution_s8nchw32_s8chwn32_s8nchw4_tensor_op_s32_sm75.cu
  *
  * Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
  *

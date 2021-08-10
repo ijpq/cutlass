@@ -638,6 +638,83 @@ public:
     }
 };
 
+template <int Interleave>
+class TensorCKxRSx {
+public:
+    /// Interleaving quantity
+    static int const kInterleave = Interleave;
+
+    /// Logical rank of tensor
+    static int const kRank = 4;
+
+    /// Rank of stride vector
+    static int const kStrideRank = 3;
+
+    /// Index type used for coordinates
+    using Index = int32_t;
+
+    /// Long index type used for offsets
+    using LongIndex = int64_t;
+
+    /// Logical coordinate
+    using TensorCoord = Tensor4DCoord;
+
+    /// Stride vector
+    using Stride = Coord<kStrideRank>;
+
+private:
+    //
+    // Data members
+    //
+
+    /// Stride data member - [c, wc, hwc]
+    Stride stride_;
+
+public:
+    //
+    // Methods
+    //
+
+    /// Constructor
+    CUTLASS_HOST_DEVICE
+    TensorCKxRSx(Stride const& stride = Stride(0)) : stride_(stride) {}
+
+    /// Helper returns a layout to a tightly packed tensor
+    CUTLASS_HOST_DEVICE
+    static TensorCKxRSx packed(TensorCoord const& extent) {
+        return TensorCKxRSx(make_Coord(kInterleave * extent.w(),
+                                       kInterleave * extent.w() * extent.h(),
+                                       extent.w() * extent.h() * extent.n()));
+    }
+
+    /// Returns the offset of a coordinate in linear memory.
+    CUTLASS_HOST_DEVICE
+    LongIndex operator()(TensorCoord const& coord) const {
+        Index n_minor = (coord.n() % kInterleave);
+        Index n_major = (coord.n() / kInterleave);
+
+        return n_minor + LongIndex(kInterleave * coord.w()) +
+               LongIndex(stride_[0] * coord.h()) +
+               LongIndex(stride_[1] * n_major) +
+               LongIndex(stride_[2] * coord.c());
+    }
+
+    /// Returns the stride of the layout
+    CUTLASS_HOST_DEVICE
+    Stride stride() const { return stride_; }
+
+    /// Returns the stride of the layout
+    CUTLASS_HOST_DEVICE
+    Stride& stride() { return stride_; }
+
+    /// Compute the number of contiguous elements needed to store a tensor with
+    /// the given size
+    CUTLASS_HOST_DEVICE
+    LongIndex capacity(TensorCoord const& extent) const {
+        return (extent.c() * stride_[2]);
+    }
+};
+
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Mapping function for 5-D NDHWC tensors.

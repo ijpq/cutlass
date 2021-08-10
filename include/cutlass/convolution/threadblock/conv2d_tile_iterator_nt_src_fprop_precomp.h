@@ -163,14 +163,15 @@ CUTLASS_HOST_DEVICE void compute_offset_fprop_ncxhwx(int* constant_offset_,
 ////////////////////////////////////////////////////////////////////////////////
 
 template <typename Shape, typename Element, typename Layout, typename ThreadMap,
-          typename TileMap, bool NeedLoadFromConstMem = true>
+          typename TileMap,
+          SpecialOptimizeDesc SpecialOpt = SpecialOptimizeDesc::NONE>
 class FpropPrecompParams;
 
 /// Parameters object is precomputed state and is host-constructible
 template <typename Shape_, typename Element_, typename ThreadMap_,
           typename TileMap_, int Interleaved>
 class FpropPrecompParams<Shape_, Element_, layout::TensorNCxHWx<Interleaved>,
-                         ThreadMap_, TileMap_, true> {
+                         ThreadMap_, TileMap_, SpecialOptimizeDesc::NONE> {
 public:
     static int const kInterleaved = Interleaved;
     using Shape = Shape_;
@@ -270,7 +271,8 @@ public:
 template <typename Shape_, typename Element_, typename ThreadMap_,
           typename TileMap_, int Interleaved>
 class FpropPrecompParams<Shape_, Element_, layout::TensorNCxHWx<Interleaved>,
-                         ThreadMap_, TileMap_, false> {
+                         ThreadMap_, TileMap_,
+                         SpecialOptimizeDesc::CONV_FILTER_UNITY> {
 public:
     static int const kInterleaved = Interleaved;
     using Shape = Shape_;
@@ -352,7 +354,8 @@ public:
 };
 
 template <typename Shape, typename Element, typename Layout, typename ThreadMap,
-          int AccessSize, typename TileMap, bool NeedLoadFromConstMem = true,
+          int AccessSize, typename TileMap,
+          SpecialOptimizeDesc SpecialOpt = SpecialOptimizeDesc::NONE,
           ImplicitGemmMode GemmMode = ImplicitGemmMode::GEMM_NT>
 class Conv2dTileSrcIteratorFpropPrecomp;
 
@@ -369,7 +372,7 @@ template <typename Shape_, typename Element_, typename ThreadMap_,
           ImplicitGemmMode GemmMode>
 class Conv2dTileSrcIteratorFpropPrecomp<
         Shape_, Element_, layout::TensorNCxHWx<Interleaved>, ThreadMap_,
-        AccessSize, TileMap_, true, GemmMode> {
+        AccessSize, TileMap_, SpecialOptimizeDesc::NONE, GemmMode> {
 public:
     using Shape = layout::PitchLinearShape<Shape_::kColumn * Interleaved,
                                            Shape_::kRow / Interleaved>;
@@ -420,9 +423,10 @@ public:
                                             ThreadMap::kElementsPerAccess>;
 
     /// Parameters object is precomputed state and is host-constructible
-    using Params = FpropPrecompParams<Shape, Element,
-                                      layout::TensorNCxHWx<kInterleaved>,
-                                      ThreadMap, TileMap, true>;
+    using Params =
+            FpropPrecompParams<Shape, Element,
+                               layout::TensorNCxHWx<kInterleaved>, ThreadMap,
+                               TileMap, SpecialOptimizeDesc::NONE>;
 
     using ExtraParam = typename Params::ExtraParam;
 
@@ -741,7 +745,8 @@ template <typename Shape_, typename Element_, typename ThreadMap_,
           ImplicitGemmMode GemmMode>
 class Conv2dTileSrcIteratorFpropPrecomp<
         Shape_, Element_, layout::TensorNCxHWx<Interleaved>, ThreadMap_,
-        AccessSize, TileMap_, false, GemmMode> {
+        AccessSize, TileMap_, SpecialOptimizeDesc::CONV_FILTER_UNITY,
+        GemmMode> {
 public:
     static int const kInterleaved = Interleaved;
     static ImplicitGemmMode const kGemmMode = GemmMode;
@@ -804,9 +809,10 @@ public:
             cutlass::Array<Element, ThreadMap::Iterations::kCount *
                                             ThreadMap::kElementsPerAccess>;
 
-    using Params = FpropPrecompParams<Shape, Element,
-                                      layout::TensorNCxHWx<kInterleaved>,
-                                      ThreadMap, TileMap, false>;
+    using Params =
+            FpropPrecompParams<Shape, Element,
+                               layout::TensorNCxHWx<kInterleaved>, ThreadMap,
+                               TileMap, SpecialOptimizeDesc::CONV_FILTER_UNITY>;
 
     using ExtraParam = typename Params::ExtraParam;
 

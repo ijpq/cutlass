@@ -25,7 +25,7 @@
  *
  **************************************************************************************************/
 /**
- * \file test/unit/convolution/device/conv2d_bias_testbed_interleaved.h
+ * \file test/unit/convolution/device/conv2d_bias_testbed.h
  *
  * Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
  *
@@ -51,7 +51,6 @@
 #include "cutlass/util/reference/host/tensor_fill.h"
 #include "cutlass/util/reference/device/tensor_compare.h"
 #include "cutlass/util/reference/host/tensor_compare.h"
-#include "cutlass/util/host_reorder.h"
 
 #include "cutlass/util/reference/host/convolution.h"
 #include "cutlass/util/reference/device/convolution.h"
@@ -63,8 +62,8 @@ namespace test {
 namespace conv {
 namespace device {
 
-template <typename Conv2d, int InterleavedK>
-class InterleavedTestbedConv2dBias {
+template <typename Conv2d>
+class TestbedConv2dBias {
 public:
     using ElementA = typename Conv2d::ElementSrc;
     using LayoutA = typename Conv2d::LayoutSrc;
@@ -95,13 +94,13 @@ public:
     cutlass::HostTensor<ElementC, LayoutC> tensor_D_reference;
 
 public:
-    InterleavedTestbedConv2dBias(cutlass::Distribution::Kind init_A_ =
-                                         cutlass::Distribution::Uniform,
-                                 cutlass::Distribution::Kind init_B_ =
-                                         cutlass::Distribution::Uniform,
-                                 cutlass::Distribution::Kind init_C_ =
-                                         cutlass::Distribution::Uniform,
-                                 uint64_t seed_ = 2080)
+    TestbedConv2dBias(cutlass::Distribution::Kind init_A_ =
+                              cutlass::Distribution::Uniform,
+                      cutlass::Distribution::Kind init_B_ =
+                              cutlass::Distribution::Uniform,
+                      cutlass::Distribution::Kind init_C_ =
+                              cutlass::Distribution::Uniform,
+                      uint64_t seed_ = 2080)
             : init_A(init_A_), init_B(init_B_), init_C(init_C_), seed(seed_) {}
 
     /// Helper to initialize a tensor view
@@ -348,8 +347,8 @@ public:
 // each conv2d test can provide conv problem sizes (conv_test_sizes) and
 // blacklist of sizes (conv_blacklist_sizes)
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////
-template <typename ImplicitGemm, int InterleavedK>
-bool TestAllInterleavedConv2dBias(
+template <typename ImplicitGemm, int Alignment, int Stride>
+bool TestAllConv2dBias(
         const Conv2dProblemVector& conv_test_sizes = Conv2dProblemVector(),
         const Conv2dProblemVector& conv_blacklist_sizes =
                 Conv2dProblemVector()) {
@@ -362,14 +361,12 @@ bool TestAllInterleavedConv2dBias(
     // Testbed object
     //
 
-    InterleavedTestbedConv2dBias<ImplicitGemm, InterleavedK> testbed;
+    TestbedConv2dBias<ImplicitGemm> testbed;
 
     //
     // Get conv problem sizes to run conv operator
     //
-    TestbedConv2dProblemSizes conv_problems(
-            InterleavedK);  // minimum channel size must be multiple of
-                            // InterleavedK for interleaved layout
+    TestbedConv2dProblemSizes conv_problems(Alignment);
 
     // Vector of conv2d problem sizes to avoid duplicate runs
     Conv2dProblemVector conv_tested_sizes;
@@ -388,9 +385,13 @@ bool TestAllInterleavedConv2dBias(
     // alpha=1.0, beta=0.0)
     for (Conv2dProblemVector const* problem_vector : problem_vectors) {
         ChannelDivisibilitySpecification channel_spec(
-                InterleavedK);  // input and output channels must be multiple of
-                                // InterleavedK
+                Alignment);  // input and output channels must be multiple of
+                             // Alignment
         auto pruned_problem_vector = prune(*problem_vector, channel_spec);
+
+        StrideSpecification stride_spec({Stride, Stride});
+
+        pruned_problem_vector = prune(pruned_problem_vector, stride_spec);
 
         //  Run conv testbed on default convolution sizes
         for (auto conv_problem : pruned_problem_vector) {
