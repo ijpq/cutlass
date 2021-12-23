@@ -8,6 +8,7 @@ cd build_cmake
 
 cmake_command="cmake ../.. \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    -DCUTLASS_NVCC_ARCHS=75 \
     -DGOOGLETEST_DIR=$(pwd)/gtest/googletest"
 echo "run cmake: $cmake_command"
 bash -c "$cmake_command"
