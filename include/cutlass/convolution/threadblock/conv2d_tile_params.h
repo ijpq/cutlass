@@ -69,13 +69,16 @@ namespace conv {
 namespace threadblock {
 
 enum class TileMapType {
-    kRow2C_Col2N,    ///< Row map to channel, Column map to batch
-    kRow2CHW_Col2N,  ///< Row map to CHW(channel x height x width), Column
-                     ///< map to batch
-    kRow2C_Col2NHW,  ///< Row map to channel, column map to NHW (batch x
-                     ///< height x width)
-    kRow2NHW_Col2C   ///< Row map to NHW(batch x height x width), Column
-                     ///< map to channel
+    kRow2C_Col2N,      ///< Row map to channel, Column map to batch
+    kRow2CHW_Col2N,    ///< Row map to CHW(channel x height x width), Column
+                       ///< map to batch
+    kRow2C_Col2NHW,    ///< Row map to channel, column map to NHW (batch x
+                       ///< height x width)
+    kRow2NHW_Col2C,    ///< Row map to NHW(batch x height x width), Column
+                       ///< map to channel
+    kRow2IHW_Col2OHW,  ///< Row map to IHW (input height xinput width), Column
+                       ///< map to OHW (output height x output width), used for
+                       ///< visiting weight of depthwise conv2d
 };
 
 template <typename Layout, TileMapType tile_map_type_>
@@ -166,6 +169,53 @@ struct TileMap<Layout_, TileMapType::kRow2C_Col2NHW> {
         fast_divmod(n, tmp, coord.column(), hw_, hw_mul_, hw_shr_);
         fast_divmod(h, w, tmp, w_, w_mul_, w_shr_);
         return TensorCoord{n, h, w, c};
+    }
+};
+
+template <>
+struct TileMap<layout::TensorNCHW, TileMapType::kRow2IHW_Col2OHW> {
+    using Layout = layout::TensorNCHW;
+    using TensorCoord = typename Layout::TensorCoord;
+    /// has no trivial strided axis
+    static const int kStrideAxis = -1;
+    Index wi_, wo_;
+    Index sh_, sw_;
+    Index ph_, pw_;
+    unsigned int wi_mul, wi_shr_, wo_mul_, wo_shr_;
+    CUTLASS_HOST_DEVICE
+    TileMap()
+            : wi_(0),
+              wo_(0),
+              sh_(0),
+              sw_(0),
+              ph_(0),
+              pw_(0),
+              wi_mul_(0),
+              wi_shr_(0),
+              wo_mul_(0),
+              wo_shr_(0) {}
+    CUTLASS_HOST_DEVICE
+    TileMap(Index wi, Index wo, Index sh, Index sw, Index ph, Index pw)
+            : wi_(wi), wo_(wo), sh_(sh), sw_(sw), ph_(ph), pw_(pw) {
+        find_divisor(wi_mul_, wi_shr_, wi);
+        find_divisor(wo_mul_, wo_shr_, wo);
+    }
+    /// convert row of logical coordinates to src height and width
+    CUTLASS_HOST_DEVICE
+    TensorCoord operator()(MatrixCoord const& coord) const {
+        int h, w;
+        fast_divmod(h, w, coord.row(), wi_mul_, wi_shr_);
+        return TensorCoord{0, h, w, 0};
+    }
+    /// convert column of logical coordinates to filter height and width
+    CUTLASS_HOST_DEVICE
+    TensorCoord operator()(MatrixCoord const& coord,
+                           TensorCoord const& src) const {
+        int h = 0, w = 0;
+        fast_divmod(h, w, coord.column(), wo_mul_, wo_shr_);
+        h = src.h() - h * sh_ + ph_;
+        w = src.w() - w * sw_ + pw_;
+        return TensorCoord{0, h, w, 0};
     }
 };
 

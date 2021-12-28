@@ -64,10 +64,13 @@ WAY OUT OF THE USE
 #include "cutlass/convolution/kernel/implicit_gemm_nt_convolution.h"
 #include "cutlass/convolution/kernel/implicit_gemm_nt_precomp_convolution.h"
 #include "cutlass/convolution/kernel/implicit_gemm_tn_precomp_convolution.h"
+#include "cutlass/convolution/kernel/implicit_batched_gemm_tn_dwconv2d.h"
 
 #include "cutlass/convolution/threadblock/conv2d_tile_iterator_nt.h"
 #include "cutlass/convolution/threadblock/conv2d_tile_iterator_nt_src_fprop_precomp.h"
 #include "cutlass/convolution/threadblock/conv2d_tile_iterator_tn_fprop_nhwc_precomp.h"
+#include "cutlass/convolution/threadblock/dwconv2d_tile_iterator_tn_filter_fprop_precomp.h"
+#include "cutlass/convolution/threadblock/dwconv2d_tile_iterator_tn.h"
 
 #include "cutlass/convolution/threadblock/implicit_mma_core.h"
 #include "cutlass/convolution/threadblock/implicit_mma_core_simt.h"
@@ -91,47 +94,51 @@ namespace kernel {
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
-template <typename ElementSrc,
-          /// Layout type for Src Tensor operand
-          typename LayoutSrc,
-          /// Element type for Filter Tensor operand
-          typename ElementFilter,
-          /// Layout type for Filter Tensor operand
-          typename LayoutFilter,
-          /// Element type for Dst and Z Tensor operands
-          typename ElementDst,
-          /// Layout type for Dst and Z Tensor operands
-          typename LayoutDst,
-          /// Element type for internal accumulation
-          typename ElementAccumulator,
-          /// MathOperatorTag class tag
-          typename OperatorClass,
-          /// Tag indicating architecture to tune for
-          typename ArchTag,
-          /// Threadblock-level tile size (concept: GemmShape)
-          typename ThreadblockShape,
-          /// Warp-level tile size (concept: GemmShape)
-          typename WarpShape,
-          /// Instruction-level tile size (concept: GemmShape)
-          typename InstructionShape,
-          /// Epilogue output operator
-          typename EpilogueOutputOp,
-          /// Threadblock-level swizzling operator
-          typename ThreadblockSwizzle,
-          /// Number of stages used in the pipelined mainloop
-          int Stages,
-          /// Operation performed by conv
-          typename MathOperatorTag,
-          /// Access granularity of Src Tensor in units of elements
-          int AlignmentSrc,
-          /// Access granularity of Filter Tensor in units of elements
-          int AlignmentFilter,
-          /// whether use special optimization for conv 1x1
-          SpecialOptimizeDesc SpecialOpt = SpecialOptimizeDesc::NONE,
-          /// Implicit Gemm Mode
-          ImplicitGemmMode GemmMode = ImplicitGemmMode::GEMM_NT,
-          /// use reorder filter K to avoid shared load
-          bool WithoutSharedLoad = false>
+template <
+        /// Element type for Src Tensor operand
+        typename ElementSrc,
+        /// Layout type for Src Tensor operand
+        typename LayoutSrc,
+        /// Element type for Filter Tensor operand
+        typename ElementFilter,
+        /// Layout type for Filter Tensor operand
+        typename LayoutFilter,
+        /// Element type for Dst and Z Tensor operands
+        typename ElementDst,
+        /// Layout type for Dst and Z Tensor operands
+        typename LayoutDst,
+        /// Element type for internal accumulation
+        typename ElementAccumulator,
+        /// MathOperatorTag class tag
+        typename OperatorClass,
+        /// Tag indicating architecture to tune for
+        typename ArchTag,
+        /// Threadblock-level tile size (concept: GemmShape)
+        typename ThreadblockShape,
+        /// Warp-level tile size (concept: GemmShape)
+        typename WarpShape,
+        /// Instruction-level tile size (concept: GemmShape)
+        typename InstructionShape,
+        /// Epilogue output operator
+        typename EpilogueOutputOp,
+        /// Threadblock-level swizzling operator
+        typename ThreadblockSwizzle,
+        /// Number of stages used in the pipelined mainloop
+        int Stages,
+        /// Operation performed by conv
+        typename MathOperatorTag,
+        /// Access granularity of Src Tensor in units of elements
+        int AlignmentSrc,
+        /// Access granularity of Filter Tensor in units of elements
+        int AlignmentFilter,
+        /// whether use special optimization for conv 1x1
+        SpecialOptimizeDesc SpecialOpt = SpecialOptimizeDesc::NONE,
+        /// Implicit Gemm Mode
+        ImplicitGemmMode GemmMode = ImplicitGemmMode::GEMM_NT,
+        /// use reorder filter K to avoid shared load
+        bool WithoutSharedLoad = false,
+        /// convolution type
+        ConvType ConvolutionType = ConvType::kConvolution>
 struct DefaultConvolution2dFprop;
 
 /// Partial specialization for SIMT DP4A
@@ -1230,6 +1237,102 @@ struct DefaultConvolution2dFprop<
     /// Define the kernel-level conv operator.
     using Kernel = cutlass::conv::kernel::ImplicitGemmTnPrecompConvolution<
             Mma, Epilogue, ThreadblockSwizzle, conv::Operator::kFprop>;
+};
+
+/// Partial specialization for Depthwise SIMT Convolution
+template <
+        /// Element type for Dst and Z Tensor operands
+        typename ElementDst,
+        /// Tag indicating architecture to tune for
+        typename ArchTag,
+        /// Element type for internal accumulation
+        typename ElementAccumulator,
+        /// Threadblock-level tile size (concept: gemm::GemmShape)
+        typename ThreadblockShape,
+        /// Warp-level tile size (concept: gemm::GemmShape)
+        typename WarpShape,
+        /// Epilogue output operator
+        typename EpilogueOutputOp,
+        /// Threadblock-level swizzling operator
+        typename ThreadblockSwizzle,
+        /// Number of stages used in the pipelined mainloop
+        int Stages,
+        /// Operation performed by conv
+        typename MathOperatorTag,
+        /// Access granularity of Src Tensor in units of elements
+        int kAlignmentSrc,
+        /// Access granularity of Filter Tensor in units of elements
+        int kAlignmentFilter>
+struct DefaultConvolution2dFprop<
+        float, layout::TensorNCHW, float, layout::TensorNCHW, ElementDst,
+        LayoutDst, ElementAccumulator, arch::OpClassSimt, ArchTag,
+        ThreadblockShape, WarpShape, gemm::GemmShape<1, 1, 1>, EpilogueOutputOp,
+        ThreadblockSwizzle, Stages, MathOperatorTag, kAlignmentSrc,
+        kAlignmentFilter, SpecialOptimizeDesc::NONE, ImplicitGemmMode::GEMM_TN,
+        false, ConvType::kDepthwiseConvolution> {
+    using InstructionShape = gemm::GemmShape<1, 1, 1>;
+    using ElementSrc = float;
+    using ElementFilter = float;
+    using LayoutSrc = layout::TensorNCHW;
+    using LayoutFilter = layout::TensorNCHW;
+    using OperatorClass = arch::OpClassSimt;
+    static const int kStages = Stages;
+    static const ImplicitGemmMode kGemmMode = ImplicitGemmMode::GEMM_TN;
+    static const ConvType kConvolutionType = ConvType::kDepthwiseConvolution;
+
+    // Define the MmaCore components
+    using MmaCore = typename cutlass::conv::threadblock::DefaultMmaCore<
+            ThreadblockShape, WarpShape, InstructionShape, ElementSrc,
+            LayoutSrc, kAlignmentSrc, ElementFilter, LayoutFilter,
+            kAlignmentFilter, ElementAccumulator, LayoutDst, OperatorClass,
+            Stages, MathOperatorTag, true, kGemmMode>;
+
+    // Define iterators over tiles from the Src Tensor operand
+    using IteratorSrc = cutlass::conv::threadblock::Dwconv2dTileIterator<
+            cutlass::MatrixShape<MmaCore::Shape::kK, MmaCore::Shape::kM>,
+            ElementSrc, LayoutSrc, typename MmaCore::IteratorThreadMapSrc,
+            MmaCore::IteratorThreadMapSrc::kElementsPerAccess>;
+
+    // Define iterators over tiles from the Filter Tensor operand
+    using IteratorFilter =
+            cutlass::conv::threadblock::Dwconv2dTileFilterIteratorFpropPrecomp<
+                    cutlass::MatrixShape<MmaCore::Shape::kK,
+                                         MmaCore::Shape::kN>,
+                    ElementFilter, LayoutFilter,
+                    typename MmaCore::IteratorThreadMapFilter,
+                    MmaCore::IteratorThreadMapFilter::kElementsPerAccess>;
+
+    using MmaPipelineSingleStage =
+            cutlass::conv::threadblock::MmaTnPrecompSingleStage<
+                    typename MmaCore::Shape, IteratorSrc,
+                    typename MmaCore::SmemIteratorSrc, IteratorFilter,
+                    typename MmaCore::SmemIteratorFilter, ElementAccumulator,
+                    LayoutDst, typename MmaCore::MmaPolicy>;
+
+    // Define the threadblock-scoped pipelined matrix multiply
+    using MmaPipelineTwoStages =
+            cutlass::conv::threadblock::MmaTnPrecompPipelined<
+                    typename MmaCore::Shape, IteratorSrc,
+                    typename MmaCore::SmemIteratorSrc, IteratorFilter,
+                    typename MmaCore::SmemIteratorFilter, ElementAccumulator,
+                    LayoutDst, typename MmaCore::MmaPolicy>;
+
+    using Mma = typename cutlass::platform::conditional<
+            (kStages == 1), MmaPipelineSingleStage, MmaPipelineTwoStages>::type;
+
+    static int const kEpilogueElementsPerAccess = 4;
+
+    /// Define the epilogue
+    using Epilogue =
+            typename cutlass::epilogue::threadblock::ConvolutionEpilogueSimt<
+                    ThreadblockShape, LayoutDst, LayoutDst,
+                    typename Mma::Operator, EpilogueOutputOp,
+                    kEpilogueElementsPerAccess>::Epilogue;
+
+    /// Define the kernel-level conv operator.
+    using Kernel =
+            cutlass::conv::kernel::ImplicitBatchedGemmTnDepthwiseConvolution<
+                    Mma, Epilogue, ThreadblockSwizzle, conv::Operator::kFprop>;
 };
 
 /////////////////////////////////////////////////////////////////////////////////////////////////

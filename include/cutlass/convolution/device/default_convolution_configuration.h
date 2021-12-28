@@ -127,6 +127,26 @@ struct DefaultConvolutionConfiguration<arch::OpClassTensorOp, arch::Sm75,
 };
 
 ////////////////////////////////////////////////////////////////////////////////
+
+template <typename ArchTag, typename ElementDst>
+struct DefaultConvolutionConfiguration<arch::OpClassSimt, ArchTag, float, float,
+                                       ElementDst, float> {
+    static int const kAlignmentSrc = 4;
+    static int const kAlignmentFilter = 1;
+    using ThreadblockShape = gemm::GemmShape<128, 128, 32>;
+    using WarpShape = gemm::GemmShape<32, 64, 32>;
+    using InstructionShape = gemm::GemmShape<1, 1, 1>;
+    static int const kStages = 2;
+
+    using EpilogueOutputOp =
+            epilogue::thread::BiasAddLinearCombination<ElementDst, 1, float,
+                                                       float, float>;
+
+    using Operator = arch::OpMultiplyAdd;
+};
+
+////////////////////////////////////////////////////////////////////////////////
+
 }  // namespace device
 }  // namespace conv
 }  // namespace cutlass

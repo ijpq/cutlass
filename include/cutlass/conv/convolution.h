@@ -90,7 +90,8 @@ enum class ConvType : uint32_t {
     kConvolution = 0,
     kBatchConvolution = 1,
     kLocal = 2,
-    kLocalShare = 3
+    kLocalShare = 3,
+    kDepthwiseConvolution = 4,
 };
 
 /// Distinguishes convolution  from cross correlation

@@ -77,6 +77,14 @@ constexpr int simt_get_warp_threads_m() {
     return (WarpShape::kM > WarpShape::kN) ? 8 : 4;
 }
 
+// Computes padding in shared memory to perform efficient transpose without
+// bank conflicts.
+constexpr int simt_transpose_padding(int threads, int crosswise,
+                                     int size_in_bits) {
+    return (size_in_bits >= 32 ? threads / crosswise / (size_in_bits / 32)
+                               : threads / crosswise * (32 / size_in_bits));
+}
+
 }  // namespace detail
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -383,6 +391,163 @@ struct DefaultMmaCore<Shape_, WarpShape_, gemm::GemmShape<1, 1, 4>, int8_t,
     /// Policy used to define MmaPipelined
     using MmaPolicy =
             gemm::threadblock::MmaPolicy<MmaWarpSimt, MatrixShape<0, 0>,
+                                         MatrixShape<0, 0>, WarpCount::kK>;
+};
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Partial specialization:
+///
+///
+///   A: layout::TensorNCHW
+///   B: layout::TensorNCHW
+///   Operator: simt class
+///
+/// This uses the default warp-level operator given tile sizes
+template <
+        /// Shape of threadblock-scoped matrix multiply operator (concept:
+        /// GemmShape)
+        typename Shape_,
+        /// Shape of warp-level matrix multiply operator (concept: GemmShape)
+        typename WarpShape_,
+        /// Element data type of Src Tensor operand
+        typename ElementSrc_,
+        /// Access granularity of Src Tensor in units of elements
+        int kAlignmentSrc,
+        /// Element data type of Filter Tensor operand
+        typename ElementFilter_,
+        /// Access granularity of Filter Tensor in units of elements
+        int kAlignmentFilter,
+        /// Data type of accumulator
+        typename ElementDst_,
+        /// Layout of accumulator
+        typename LayoutDst_,
+        /// Number of stages used in the pipelined mainloop
+        int Stages,
+        /// Operation performed by Convolution
+        typename Operator_>
+struct DefaultMmaCore<Shape_, WarpShape_, gemm::GemmShape<1, 1, 1>, ElementSrc_,
+                      layout::TensorNCHW, kAlignmentSrc, ElementFilter,
+                      LayoutFilter_, kAlignmentFilter, ElementDst_, LayoutDst_,
+                      arch::OpClassSimt, Stages, Operator_, true,
+                      ImplicitGemmMode::GEMM_TN> {
+    using Shape = Shape_;
+    using WarpShape = WarpShape_;
+    using InstructionShape = gemm::GemmShape<1, 1, 1>;
+    using ElementSrc = ElementSrc_;
+    using LayoutSrc = layout::TensorNCHW;
+    using ElementFilter = ElementFilter_;
+    using LayoutFilter = layout::TensorNCHW;
+    using ElementDst = ElementDst_;
+    using LayoutDst = LayoutDst_;
+    using OperatorClass = arch::OpClassSimt;
+    static int const PartitionsK = Shape::kK / WarpShape::kK;
+
+    /// Default Operator
+    using Operator = Operator_;
+
+    /// Number of warps present
+    using WarpCount = gemm::GemmShape<Shape::kM / WarpShape::kM,
+                                      Shape::kN / WarpShape::kN, PartitionsK>;
+
+    // Divisility requirements
+    static_assert(!(Shape::kM % WarpShape::kM) && !(Shape::kN % WarpShape::kN),
+                  "Threadblock-scoped GEMM should be divisible by warp-scoped "
+                  "GEMM size.");
+
+    /// Number of threads per warp
+    static int const kWarpSize = gemm::warp::WarpSize<arch::OpClassSimt>::value;
+
+    /// Number of threads total
+    static int const kThreads = WarpCount::kCount * kWarpSize;
+
+    //
+    // Shared memory layouts
+    //
+
+    using SmemLayoutSrc = layout::ColumnMajor;
+    using SmemLayoutFilter = layout::RowMajor;
+
+    //
+    // Iterators to write to shared memory
+    //
+
+    /// ThreadMap of iterator Src
+    using IteratorThreadMapSrc = transform::PitchLinearStripminedThreadMap<
+            layout::PitchLinearShape<Shape::kK, Shape::kM>, kThreads,
+            kAlignmentSrc>;
+
+    using SmemThreadMapSrc =
+            transform::TransposePitchLinearThreadMap<IteratorThreadMapSrc>;
+
+    /// Shared memory iterator to Src Tensor operand
+    using SmemIteratorSrc = transform::threadblock::RegularTileIterator<
+            MatrixShape<Shape::kM, Shape::kK>, ElementSrc, SmemLayoutSrc, 1,
+            SmemThreadMapSrc>;
+
+    /// Policy of iterator Filter
+    using IteratorThreadMapFilter = transform::PitchLinearStripminedThreadMap<
+            layout::PitchLinearShape<Shape::kN, Shape::kK>, kThreads,
+            kAlignmentFilter>;
+
+    using SmemThreadMapFilter = IteratorThreadMapFilter;
+
+    /// Shared memory iterator to Filter Tensor operand
+    using SmemIteratorFilter = transform::threadblock::RegularTileIterator<
+            MatrixShape<Shape::kK, Shape::kN>, ElementFilter, SmemLayoutFilter,
+            0, SmemThreadMapFilter>;
+
+    //
+    // Warp-level matrix multiply operator
+    //
+
+    // Define the warp-level op
+    static const int WarpNumThreadsM =
+            detail::simt_get_warp_threads_m<WarpShape>();
+    static const int WarpNumThreadsN = kWarpSize / WarpNumThreadsM;
+    static const int ThreadTileM = WarpShape::kM / WarpNumThreadsM;
+    static const int ThreadTileN = WarpShape::kN / WarpNumThreadsN;
+    static_assert(!(WarpShape::kM % WarpNumThreadsM) &&
+                          !(WarpShape::kN % WarpNumThreadsN),
+                  "WarpShape must be divisible by ThreadTile shape.");
+    static const int LaneLayout = ThreadTileM > 4 && ThreadTileN > 4 ? 2 : 1;
+    static const int numElementsSrc = 128 / sizeof_bits<ElementSrc>::value;
+    static const int numElementsFilter =
+            128 / sizeof_bits<ElementFilter>::value;
+    static const int LaneM = cutlass::const_min(numElementsSrc, ThreadTileM);
+    static const int LaneN = cutlass::const_min(numElementsFilter, ThreadTileN);
+    static int const kPaddingM = detail::simt_transpose_padding(
+            kWarpSize, Shape::kK, sizeof_bits<ElementSrc>::value);
+
+    // these should have max of thread tile also
+    using LaneMmaShape = cutlass::gemm::GemmShape<LaneM, LaneN, 1>;
+
+    using Policy = cutlass::gemm::warp::MmaSimtPolicy<
+            cutlass::MatrixShape<WarpNumThreadsM,
+                                 WarpNumThreadsN>,             // WarpShape
+            cutlass::layout::RowMajorInterleaved<LaneLayout>,  // LaneLayout
+            LaneMmaShape>;
+
+    using MmaWarpSimt = cutlass::gemm::warp::MmaSimt<
+            WarpShape,         /// Size of the Gemm problem - concept:
+                               /// gemm::GemmShape<> 128, 128, 8
+            ElementSrc,        /// Data type of Filter Tensor elements
+            SmemLayoutSrc,     /// Layout of Filter Tensor's Matrix (concept:
+                               /// MatrixLayout)
+            ElementFilter,     /// Data type of Src Tensor elements
+            SmemLayoutFilter,  /// Layout of Src Tensor's matrix (concept:
+                               /// MatrixLayout)
+            ElementDst,        /// Element type of Dst Tensor matrix
+            layout::RowMajor,  /// Layout of Dst Tensor's matrix (concept:
+                               /// MatrixLayout)
+            Policy,      /// Policy describing warp-level MmaSimtOp (concept:
+                         /// MmaSimtOp policy)
+            PartitionsK  /// Number of partitions along K dimension
+            >;
+
+    /// Policy used to define MmaPipelined
+    using MmaPolicy =
+            gemm::threadblock::MmaPolicy<MmaWarpSimt, MatrixShape<kPaddingM, 0>,
                                          MatrixShape<0, 0>, WarpCount::kK>;
 };
 
