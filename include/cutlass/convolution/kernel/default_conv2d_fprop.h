@@ -81,6 +81,7 @@ WAY OUT OF THE USE
 #include "cutlass/epilogue/threadblock/convolution_epilogue_simt.h"
 #include "cutlass/epilogue/threadblock/convolution_epilogue_tensor_op.h"
 #include "cutlass/epilogue/threadblock/default_epilogue_tensor_op.h"
+#include "cutlass/epilogue/threadblock/dwconv2d_epilogue_simt.h"
 
 #include "cutlass/epilogue/thread/bias_add_linear_combination_relu_clamp.h"
 #include "cutlass/epilogue/thread/bias_add_linear_combination_hswish_clamp.h"
@@ -1243,6 +1244,8 @@ struct DefaultConvolution2dFprop<
 template <
         /// Element type for Dst and Z Tensor operands
         typename ElementDst,
+        /// Layout type for Dst and Z Tensor operands
+        typename LayoutDst,
         /// Tag indicating architecture to tune for
         typename ArchTag,
         /// Element type for internal accumulation
@@ -1289,7 +1292,7 @@ struct DefaultConvolution2dFprop<
 
     // Define iterators over tiles from the Src Tensor operand
     using IteratorSrc = cutlass::conv::threadblock::Dwconv2dTileIterator<
-            cutlass::MatrixShape<MmaCore::Shape::kK, MmaCore::Shape::kM>,
+            cutlass::MatrixShape<MmaCore::Shape::kM, MmaCore::Shape::kK>,
             ElementSrc, LayoutSrc, typename MmaCore::IteratorThreadMapSrc,
             MmaCore::IteratorThreadMapSrc::kElementsPerAccess>;
 
@@ -1320,11 +1323,11 @@ struct DefaultConvolution2dFprop<
     using Mma = typename cutlass::platform::conditional<
             (kStages == 1), MmaPipelineSingleStage, MmaPipelineTwoStages>::type;
 
-    static int const kEpilogueElementsPerAccess = 4;
+    static int const kEpilogueElementsPerAccess = 1;
 
     /// Define the epilogue
     using Epilogue =
-            typename cutlass::epilogue::threadblock::ConvolutionEpilogueSimt<
+            typename cutlass::epilogue::threadblock::Dwconv2dEpilogueSimt<
                     ThreadblockShape, LayoutDst, LayoutDst,
                     typename Mma::Operator, EpilogueOutputOp,
                     kEpilogueElementsPerAccess>::Epilogue;

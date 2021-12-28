@@ -96,7 +96,7 @@ public:
     using Pointer = Element*;
 
     using UnderlyingIterator = transform::threadblock::PredicatedTileIterator<
-            Shape， Element, layout::PitchLinear, 0, ThreadMap, AccessSize>;
+            Shape, Element, layout::PitchLinear, 0, ThreadMap, AccessSize>;
 
     /// Type used for internal memory accesses
     using AccessType = typename UnderlyingIterator::AccessType;
@@ -106,13 +106,16 @@ public:
             cutlass::Array<Element, ThreadMap::Iterations::kCount *
                                             ThreadMap::kElementsPerAccess>;
 
-    /// compatible for constructor function
-    using ExtraParam = platform::none_type;
+    using TileMap = TileMap<Layout, TileMapType::kRow2N_Col2HW>;
 
     /// Predicate vector stores mask to guard accesses
     using Mask = typename UnderlyingIterator::Mask;
 
     class Params {
+    public:
+        /// compatible for constructor function
+        using ExtraParam = platform::none_type;
+
     private:
         friend Dwconv2dTileIterator;
 
@@ -127,7 +130,7 @@ public:
 
         CUTLASS_HOST_DEVICE
         Params(Layout const& layout, Conv2dProblemSize const& problem_size,
-               ExtraParam const extra_param = {})
+               ExtraParam const& extra_param = {})
                 : params_(layout::PitchLinear(
                           layout.stride()[TileMap::kStrideAxis])),
                   layout_(layout) {}

@@ -61,6 +61,8 @@
 #include "cutlass/gemm/warp/mma_simt_policy.h"
 #include "cutlass/layout/tensor.h"
 
+#include "cutlass/convolution/threadblock/dwconv2d_tile_iterator_tn_filter_fprop_precomp.h"
+
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
 namespace cutlass {
@@ -427,9 +429,9 @@ template <
         /// Operation performed by Convolution
         typename Operator_>
 struct DefaultMmaCore<Shape_, WarpShape_, gemm::GemmShape<1, 1, 1>, ElementSrc_,
-                      layout::TensorNCHW, kAlignmentSrc, ElementFilter,
-                      LayoutFilter_, kAlignmentFilter, ElementDst_, LayoutDst_,
-                      arch::OpClassSimt, Stages, Operator_, true,
+                      layout::TensorNCHW, kAlignmentSrc, ElementFilter_,
+                      layout::TensorNCHW, kAlignmentFilter, ElementDst_,
+                      LayoutDst_, arch::OpClassSimt, Stages, Operator_, true,
                       ImplicitGemmMode::GEMM_TN> {
     using Shape = Shape_;
     using WarpShape = WarpShape_;
@@ -477,8 +479,59 @@ struct DefaultMmaCore<Shape_, WarpShape_, gemm::GemmShape<1, 1, 1>, ElementSrc_,
             layout::PitchLinearShape<Shape::kK, Shape::kM>, kThreads,
             kAlignmentSrc>;
 
-    using SmemThreadMapSrc =
-            transform::TransposePitchLinearThreadMap<IteratorThreadMapSrc>;
+    struct TransposedPitchLinearThreadMapVec {
+        /// underlying ThreadMap
+        using ThreadMap = IteratorThreadMapSrc;
+
+        /// Tensor coordinate
+        using TensorCoord = typename ThreadMap::TensorCoord;
+
+        /// Tile shape
+        using Shape = typename ThreadMap::Shape;
+
+        /// Number of threads total
+        static int const kThreads = ThreadMap::kThreads;
+
+        /// Extract vector length from Layout
+        static int const kElementsPerAccess = 1;
+
+        static_assert(ThreadMap::Iterations::kContiguous == 1 &&
+                              ThreadMap::Delta::kContiguous == 1,
+                      "Vectorized simt transpose requires iterations along "
+                      "contiguous dimension to be 1");
+
+        ///< Iterations along each dimension (concept: PitchLinearShape)
+        using Iterations =
+                layout::PitchLinearShape<ThreadMap::Iterations::kStrided,
+                                         ThreadMap::Iterations::kContiguous *
+                                                 ThreadMap::kElementsPerAccess>;
+
+        static_assert(Iterations::kCount,
+                      "Number of iterations must be non-zero");
+
+        /// Shape of access by each thread
+        using ThreadAccessShape =
+                layout::PitchLinearShape<kElementsPerAccess, 1>;
+
+        ///< Delta betweeen accesses (units of elements, concept:
+        ///< PitchLinearShape)
+        using Delta = layout::PitchLinearShape<ThreadMap::Delta::kStrided, 1>;
+
+        /// Maps thread ID to a coordinate offset within the tensor's logical
+        /// coordinate space Note this is slightly different from the one of
+        /// PitchLinearWarpRakedThreadMap.
+        CUTLASS_HOST_DEVICE
+        static TensorCoord initial_offset(int thread_id) {
+            TensorCoord coord = ThreadMap::initial_offset(thread_id);
+
+            return TensorCoord(
+                    coord.strided(),
+                    coord.contiguous() * ThreadMap::kElementsPerAccess);
+        }
+    };
+
+    using SmemThreadMapSrc = TransposedPitchLinearThreadMapVec;
+//            transform::TransposePitchLinearThreadMapSimt<IteratorThreadMapSrc>;
 
     /// Shared memory iterator to Src Tensor operand
     using SmemIteratorSrc = transform::threadblock::RegularTileIterator<
@@ -486,9 +539,10 @@ struct DefaultMmaCore<Shape_, WarpShape_, gemm::GemmShape<1, 1, 1>, ElementSrc_,
             SmemThreadMapSrc>;
 
     /// Policy of iterator Filter
-    using IteratorThreadMapFilter = transform::PitchLinearStripminedThreadMap<
-            layout::PitchLinearShape<Shape::kN, Shape::kK>, kThreads,
-            kAlignmentFilter>;
+    using IteratorThreadMapFilter =
+            threadblock::PitchLinearStripminedThreadMapStrided<
+                    layout::PitchLinearShape<Shape::kN, Shape::kK>, kThreads,
+                    kAlignmentFilter>;
 
     using SmemThreadMapFilter = IteratorThreadMapFilter;
 

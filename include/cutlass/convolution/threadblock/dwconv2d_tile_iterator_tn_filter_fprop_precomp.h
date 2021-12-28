@@ -56,6 +56,71 @@ namespace cutlass {
 namespace conv {
 namespace threadblock {
 
+/////////////////////////////////////////////////////////////////////////////////////////////////
+/// Strip-mines a pitch-linear tile among a given number of threads, first along
+/// the contiguous dimension then along the strided dimension, while each thread
+/// access ElementsPerAccess elements.
+template <typename Shape_, int Threads, int ElementsPerAccess = 1>
+struct PitchLinearStripminedThreadMapStrided {
+    /// Tensor coordinate
+    using TensorCoord = layout::PitchLinearCoord;
+
+    /// Tile shape
+    using Shape = Shape_;
+
+    /// Number of threads total
+    static int const kThreads = Threads;
+
+    static_assert(Shape::kStrided <= kThreads,
+                  "Stride of shape must be less than thread count");
+
+    /// Extract vector length from Layout
+    static int const kElementsPerAccess = ElementsPerAccess;
+
+    /// Shape of access by each thread
+    using ThreadAccessShape = layout::PitchLinearShape<kElementsPerAccess, 1>;
+
+    /// Internal implementation details
+    struct Detail {
+        static_assert(!(Shape::kContiguous % kElementsPerAccess), "");
+
+        static_assert(!((Shape::kContiguous * Shape::kStrided) %
+                        (kThreads * kElementsPerAccess)),
+                      "Shape must be divisible thread count.");
+
+        /// Shape of the tile in units of vectors
+        using ShapeVec = layout::PitchLinearShape<
+                Shape::kContiguous / kElementsPerAccess, Shape::kStrided>;
+
+        static_assert(kThreads >= ShapeVec::kStrided &&
+                              !(kThreads % ShapeVec::kStrided),
+                      "Thread count must be divisible by stride of shape");
+    };
+
+    using ThreadArrangement =
+            layout::PitchLinearShape<kThreads / Detail::ShapeVec::kStrided,
+                                     Detail::ShapeVec::kStrided>;
+
+    /// Number of iterations by each thread
+    using Iterations = layout::PitchLinearShape<
+            Detail::ShapeVec::kContiguous / ThreadArrangement::kContiguous, 1>;
+
+    /// Interval between accesses along each dimension of the tensor's logical
+    /// coordinate space (in units of Elements)
+    using Delta = layout::PitchLinearShape<ThreadArrangement::kContiguous *
+                                                   kElementsPerAccess,
+                                           ThreadArrangement::kStrided>;
+
+    /// Maps thread ID to a coordinate offset within the tensor's logical
+    /// coordinate space (in units of Elements)
+    CUTLASS_HOST_DEVICE
+    static TensorCoord initial_offset(int thread_id) {
+        return TensorCoord((thread_id % ThreadArrangement::kContiguous) *
+                                   kElementsPerAccess,
+                           thread_id / ThreadArrangement::kContiguous);
+    }
+};
+
 ////////////////////////////////////////////////////////////////////////////////
 
 template <typename Shape, typename Element, typename Layout, typename ThreadMap,
@@ -107,8 +172,10 @@ public:
     static_assert(!(ThreadMap::kElementsPerAccess % AccessType::kElements),
                   "Vectors implied by the thread map must be divisible by the "
                   "access type.");
-
-    static_assert(ThreadMap::Iterations::kStrided == 1);
+    static_assert(
+            ThreadMap::Iterations::kStrided == 1 && kAccessesPerVector == 1 &&
+                    AccessSize == 1,
+            "This tile iterator only support access 1 element per access");
 
     static int const kAccessCount = ThreadMap::Iterations::kCount;
 
@@ -124,6 +191,9 @@ public:
     using Mask = platform::none_type;
 
     class Params {
+    public:
+        friend Dwconv2dTileFilterIteratorFpropPrecomp;
+
     private:
         TileMap tile_map_;
         Index fh_, fw_;
@@ -181,7 +251,7 @@ private:
             Index column =
                     c * ThreadMap::Delta::kContiguous + thread_offset.column();
             auto coord = params_.tile_map_(
-                    MatrixCoord{thread_offset.row(), col}, src);
+                    MatrixCoord{thread_offset.row(), column}, src);
             filter_r_[c] = coord.h();
             filter_s_[c] = coord.w();
         }
@@ -202,19 +272,21 @@ public:
             int thread_id,
             /// Initial offset of threadblock
             LogicalCoord const& threadblock_offset)
-            : params_(params), is_residue_tile_(true) {
+            : params_(params), pointer_(pointer), is_residue_tile_(true) {
         residue_offset_ =
                 (extent.row() - threadblock_offset.row()) % Shape::kStrided;
         if (!residue_offset_) {
             residue_offset_ = Shape::kStrided;
         }
 
-        residue_extent_ = min(threadblock_offset.row() + residue_extent_.row(),
-                              extent.row());
+        residue_extent_ =
+                min(threadblock_offset.row() + residue_offset_, extent.row());
 
         auto thread_offset_ = ThreadMap::initial_offset(thread_id);
         // Per-thread offset in logical coordinates of tensor
-        LogicalCoord thread_offset = threadblock_offset_ + thread_offset_;
+        LogicalCoord thread_offset =
+                threadblock_offset + LogicalCoord{thread_offset_.strided(),
+                                                  thread_offset_.contiguous()};
 
         initialize_filter_coordinates_(thread_offset);
 
@@ -236,7 +308,7 @@ public:
     /// Adds a pointer offset in units of Element
     CUTLASS_HOST_DEVICE
     void add_pointer_offset(LongIndex pointer_offset) {
-        pointer_ += sizeof_bits<Element>::value * pointer_offset / 8;
+        pointer_ += pointer_offset;
     }
 
     /// Advances to the next tile in memory.
@@ -273,6 +345,22 @@ public:
         return self;
     }
 
+    /// Clears the predicate set efficiently
+    CUTLASS_HOST_DEVICE
+    void clear_mask() {}
+
+    /// Clears the predicate set efficiently
+    CUTLASS_HOST_DEVICE
+    void enable_mask() {}
+
+    /// Sets the predicate mask, overriding value stored in predicate iterator
+    CUTLASS_HOST_DEVICE
+    void set_mask(Mask const& /* mask */) {}
+
+    /// Gets the mask
+    CUTLASS_HOST_DEVICE
+    void get_mask(Mask& /* mask */) {}
+
     CUTLASS_DEVICE
     void load_with_pointer_offset(Fragment& frag, Index pointer_offset) {
         load_with_byte_offset(frag,
@@ -291,28 +379,23 @@ public:
                          filter_s >= 0 && filter_s < params_.fw_;
             if (is_residue_tile_)
                 guard &= residue_extent_ > 0;
-            CUTLASS_PRAGMA_UNROLL
-            for (int v = 0; v < kAccessesPerVector; ++v) {
-                int idx = v + kAccessesPerVector * c;
-                char const* byte_ptr =
-                        reinterpret_cast<char const*>(
-                                pointer_ +
-                                (filter_r * params_.fw_ + v * AccessSize) *
-                                        sizeof_bits<Element>::value / 8) +
-                        byte_offset;
+            char const* byte_ptr =
+                    reinterpret_cast<char const*>(
+                            pointer_ + filter_r * params_.fw_ + filter_s) +
+                    byte_offset;
 
-                AccessType const* access_ptr =
-                        reinterpret_cast<AccessType const*>(byte_ptr);
+            AccessType const* access_ptr =
+                    reinterpret_cast<AccessType const*>(byte_ptr);
 
-                cutlass::arch::global_load<AccessType, sizeof(AccessType)>(
-                        frag_ptr[idx], access_ptr, guard, params_.pack_pad_);
-            }
+            cutlass::arch::global_load<AccessType, sizeof(AccessType)>(
+                    frag_ptr[c], access_ptr, guard);
         }
     }
 
     /// Loads a fragment from memory
-    CUTLASS_DEVICE
-    void load(Fragment& frag) { load_with_pointer_offset(frag, 0); }
+    CUTLASS_DEVICE void load(Fragment& frag) {
+        load_with_pointer_offset(frag, 0);
+    }
 
     /// Store a fragment to memory
     CUTLASS_DEVICE
@@ -333,28 +416,22 @@ public:
                          filter_s >= 0 && filter_s < params_.fw_;
             if (is_residue_tile_)
                 guard &= residue_extent_ > 0;
-            CUTLASS_PRAGMA_UNROLL
-            for (int v = 0; v < kAccessesPerVector; ++v) {
-                int idx = v + kAccessesPerVector * c;
-                char const* byte_ptr =
-                        reinterpret_cast<char const*>(
-                                pointer_ +
-                                (filter_r * params_.fw_ + v * AccessSize) *
-                                        sizeof_bits<Element>::value / 8) +
-                        byte_offset;
+            char const* byte_ptr =
+                    reinterpret_cast<char const*>(
+                            pointer_ + filter_r * params_.fw_ + filter_s) +
+                    byte_offset;
 
-                AccessType const* access_ptr =
-                        reinterpret_cast<AccessType const*>(byte_ptr);
+            AccessType const* access_ptr =
+                    reinterpret_cast<AccessType const*>(byte_ptr);
 
-                cutlass::arch::global_store<AccessType, sizeof(AccessType)>(
-                        frag_ptr[idx], access_ptr, guard);
-            }
+            cutlass::arch::global_store<AccessType, sizeof(AccessType)>(
+                    frag_ptr[c], access_ptr, guard);
         }
     }
 
-    CUTLASS_DEVICE
-    Dwconv2dTileFilterIteratorFpropPrecomp& add_coord_offset(
+    CUTLASS_DEVICE Dwconv2dTileFilterIteratorFpropPrecomp& add_coord_offset(
             TensorCoord const& coord_offset) {
+        auto size = params_.layout_(coord_offset);
         add_pointer_offset(params_.layout_(coord_offset));
         return *this;
     }

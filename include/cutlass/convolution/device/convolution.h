@@ -161,7 +161,7 @@ public:
                     ArchTag, ThreadblockShape, WarpShape, InstructionShape,
                     EpilogueOutputOp, ThreadblockSwizzle, kStages, Operator,
                     kAlignmentSrc, kAlignmentFilter, kSpecialOpt, kGemmMode,
-                    WithoutSharedLoad>::Kernel;
+                    WithoutSharedLoad, kConvolutionType>::Kernel;
 
     using TensorRefSrc = typename ConvolutionKernel::TensorRefSrc;
     using TensorRefFilter = typename ConvolutionKernel::TensorRefFilter;

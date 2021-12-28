@@ -268,7 +268,7 @@ struct DepthwiseConvolutionFpropThreadblockSwizzle {
     gemm::GemmCoord get_tiled_shape(Conv2dProblemSize const& problem_size,
                                     gemm::GemmCoord const& tile_size) const {
         return gemm::GemmCoord(
-                problem_size.C,
+                problem_size.K,
                 (problem_size.N + tile_size.m() - 1) / tile_size.m(),
                 (problem_size.P * problem_size.Q + tile_size.n() - 1) /
                         tile_size.n());

@@ -315,7 +315,7 @@ struct ImplicitBatchedGemmTnDepthwiseConvolution {
 
         iterator_src.add_coord_offset({0, 0, 0, threadblock_tile_offset.k()});
         iterator_filter.add_coord_offset(
-                {0, 0, 0, threadblock_tile_offset.k()});
+                {threadblock_tile_offset.k(), 0, 0, 0});
 
         // Broadcast the warp_id computed by lane 0 to ensure dependent code
         // is compiled as warp-uniform.
@@ -330,7 +330,6 @@ struct ImplicitBatchedGemmTnDepthwiseConvolution {
         Mma mma(shared_storage.main_loop, thread_idx, warp_idx, lane_idx);
 
         typename Mma::FragmentDst accumulators;
-
         accumulators.clear();
 
         mma(params.conv_k_iterations, accumulators, iterator_src,
@@ -370,6 +369,9 @@ struct ImplicitBatchedGemmTnDepthwiseConvolution {
 
         Epilogue epilogue(shared_storage.epilogue, thread_idx, warp_idx,
                           lane_idx);
+        iterator_bias.add_coord_offset({0, 0, 0, threadblock_tile_offset.k()});
+        iterator_z.add_coord_offset({0, 0, 0, threadblock_tile_offset.k()});
+        iterator_dst.add_coord_offset({0, 0, 0, threadblock_tile_offset.k()});
 
         // Execute the epilogue operator to update the destination tensor.
         epilogue(output_op, iterator_dst, accumulators, iterator_bias,

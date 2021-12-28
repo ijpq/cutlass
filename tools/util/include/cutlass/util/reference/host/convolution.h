@@ -223,6 +223,90 @@ void Depsep_Fprop(
     }
 }
 
+/// Depthwise-separable convolution
+template <typename ElementSrc, typename LayoutSrc, typename ElementFilter,
+          typename LayoutFilter, typename ElementDst, typename LayoutDst,
+          typename ElementBias, typename LayoutBias,
+          typename ElementAccumulator, typename ElementCompute,
+          typename ConvertOp = NumericConverter<ElementDst, ElementCompute>,
+          typename InnerProductOp = multiply_add<ElementAccumulator>>
+void Depsep_Fprop(
+        conv::Conv2dProblemSize conv_param,
+        cutlass::TensorRef<ElementSrc, LayoutSrc> tensor_src,
+        cutlass::TensorRef<ElementFilter, LayoutFilter> tensor_filter,
+        cutlass::TensorRef<ElementBias, LayoutBias> tensor_bias,
+        cutlass::TensorRef<ElementDst, LayoutDst> tensor_z,
+        cutlass::TensorRef<ElementDst, LayoutDst> tensor_dst,
+        ElementCompute alpha, ElementCompute beta, ElementCompute gamma,
+        cutlass::conv::Mode mode = cutlass::conv::Mode::kCrossCorrelation) {
+    ConvertOp convert_op;
+    InnerProductOp inner_product_op;
+
+    int const N = conv_param.N;
+    int const G = conv_param.K;
+    int const H = conv_param.H;
+    int const W = conv_param.W;
+    int const P = conv_param.P;
+    int const Q = conv_param.Q;
+    int const R = conv_param.R;
+    int const S = conv_param.S;
+    int const PH = conv_param.pad_h;
+    int const PW = conv_param.pad_w;
+    int const SH = conv_param.stride_h;
+    int const SW = conv_param.stride_w;
+    int const DH = conv_param.dilation_h;
+    int const DW = conv_param.dilation_w;
+
+    // Apply MMA and accumulate ElementAccumulator
+    for (int n = 0; n < N; ++n) {
+        for (int p = 0; p < P; ++p) {
+            for (int q = 0; q < Q; ++q) {
+                for (int g = 0; g < G; ++g) {
+                    ElementAccumulator acc = ElementAccumulator();
+                    for (int r = 0; r < R; ++r) {
+                        for (int s = 0; s < S; ++s) {
+                            if ((p * SH - PH + r * DH) < H &&
+                                (p * SH - PH + r * DH) >= 0 &&
+                                (q * SW - PW + s * DW) < W &&
+                                (q * SW - PW + s * DW) >= 0) {
+                                ElementSrc sv = tensor_src.at(
+                                        {n, p * SH - PH + r * DH,
+                                         q * SW - PW + s * DW, g});
+
+                                ElementFilter fv =
+                                        (mode ==
+                                         cutlass::conv::Mode::kCrossCorrelation)
+                                                ? tensor_filter.at({g, r, s, 0})
+                                                : tensor_filter.at(
+                                                          {g, R - r - 1,
+                                                           S - s - 1, 0});
+
+                                acc = inner_product_op(ElementAccumulator(sv),
+                                                       ElementAccumulator(fv),
+                                                       acc);
+                            }
+                        }
+                    }
+
+                    // Apply Epilogue, compute ElementCompute, convert and store
+                    // ElementC
+                    ElementCompute intermediate = alpha * ElementCompute(acc);
+                    if (beta != ElementCompute()) {
+                        intermediate += beta * tensor_bias.at({0, 0, 0, g});
+                    }
+                    if (gamma != ElementCompute()) {
+                        intermediate += gamma * tensor_z.at({n, p, q, g});
+                    }
+                    if (detail::need_round<ElementDst, ElementCompute>::value) {
+                        intermediate = std::round(intermediate);
+                    }
+                    tensor_dst.at({n, p, q, g}) = convert_op(intermediate);
+                }
+            }
+        }
+    }
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 /// Dgrad
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1423,6 +1507,57 @@ struct Deconvolution {
 };
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// TODO: support bias and z
+/// specialization for depthwise convolution
+template <typename ElementSrc, typename LayoutSrc, typename ElementFilter,
+          typename LayoutFilter, typename ElementDst, typename LayoutDst,
+          typename ElementBias, typename LayoutBias, typename ScalarType,
+          typename ComputeType, typename InnerProductOp>
+struct Convolution<conv::ConvType::kDepthwiseConvolution, ElementSrc, LayoutSrc,
+                   ElementFilter, LayoutFilter, ElementDst, LayoutDst,
+                   ElementBias, LayoutBias, ScalarType, ComputeType,
+                   InnerProductOp> {
+    using ConvertOp = typename platform::conditional<
+            detail::need_clamp<ElementDst>::value,
+            NumericConverterClamp<ElementDst, ScalarType>,
+            NumericConverter<ElementDst, ScalarType>>::type;
+    void operator()(conv::Conv2dProblemSize conv_param, ScalarType alpha,
+                    TensorRef<ElementSrc, LayoutSrc> tensor_src,
+                    TensorRef<ElementFilter, LayoutFilter> tensor_filter,
+                    ScalarType beta,
+                    TensorRef<ElementBias, LayoutBias> tensor_bias,
+                    TensorRef<ElementDst, LayoutDst> tensor_dst,
+                    ComputeType initial_accum = ComputeType(0)) {
+        static_assert(LayoutSrc::kRank == 4 && LayoutFilter::kRank == 4 &&
+                              LayoutDst::kRank == 4 && LayoutBias::kRank == 4,
+                      "Tensors must be of rank 4");
+        Depsep_Fprop<ElementSrc, LayoutSrc, ElementFilter, LayoutFilter,
+                     ElementBias, LayoutBias, ElementDst, LayoutDst, ScalarType,
+                     ComputeType, ConvertOp, multiply_add<ComputeType>>(
+                conv_param, tensor_src, tensor_filter, tensor_bias, tensor_dst,
+                tensor_dst, alpha, beta, 0);
+    }
+
+    void operator()(conv::Conv2dProblemSize conv_param, ScalarType alpha,
+                    TensorRef<ElementSrc, LayoutSrc> tensor_src,
+                    TensorRef<ElementFilter, LayoutFilter> tensor_filter,
+                    ScalarType beta,
+                    TensorRef<ElementBias, LayoutBias> tensor_bias,
+                    ScalarType gamma, TensorRef<ElementDst, LayoutDst> tensor_z,
+                    TensorRef<ElementDst, LayoutDst> tensor_dst,
+                    ComputeType initial_accum = ComputeType(0)) {
+        static_assert(LayoutSrc::kRank == 4 && LayoutFilter::kRank == 4 &&
+                              LayoutDst::kRank == 4 && LayoutBias::kRank == 4,
+                      "Tensors must be of rank 4");
+
+        Depsep_Fprop<ElementSrc, LayoutSrc, ElementFilter, LayoutFilter,
+                     ElementBias, LayoutBias, ElementDst, LayoutDst, ScalarType,
+                     ComputeType, ConvertOp, multiply_add<ComputeType>>(
+                conv_param, tensor_src, tensor_filter, tensor_bias, tensor_z,
+                tensor_dst, alpha, beta, gamma);
+    }
+};
 
 }  // namespace host
 }  // namespace reference

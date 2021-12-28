@@ -79,6 +79,9 @@ enum class TileMapType {
     kRow2IHW_Col2OHW,  ///< Row map to IHW (input height xinput width), Column
                        ///< map to OHW (output height x output width), used for
                        ///< visiting weight of depthwise conv2d
+    kRow2N_Col2HW,     ///< Row map to batch dimension, Column map to HW (input
+                    ///< height x input width), used for visiting input tensor
+                    ///< of depthwise conv2d
 };
 
 template <typename Layout, TileMapType tile_map_type_>
@@ -176,12 +179,13 @@ template <>
 struct TileMap<layout::TensorNCHW, TileMapType::kRow2IHW_Col2OHW> {
     using Layout = layout::TensorNCHW;
     using TensorCoord = typename Layout::TensorCoord;
+    using Index = Layout::Index;
     /// has no trivial strided axis
     static const int kStrideAxis = -1;
     Index wi_, wo_;
     Index sh_, sw_;
     Index ph_, pw_;
-    unsigned int wi_mul, wi_shr_, wo_mul_, wo_shr_;
+    unsigned int wi_mul_, wi_shr_, wo_mul_, wo_shr_;
     CUTLASS_HOST_DEVICE
     TileMap()
             : wi_(0),
@@ -204,7 +208,7 @@ struct TileMap<layout::TensorNCHW, TileMapType::kRow2IHW_Col2OHW> {
     CUTLASS_HOST_DEVICE
     TensorCoord operator()(MatrixCoord const& coord) const {
         int h, w;
-        fast_divmod(h, w, coord.row(), wi_mul_, wi_shr_);
+        fast_divmod(h, w, coord.row(), wi_, wi_mul_, wi_shr_);
         return TensorCoord{0, h, w, 0};
     }
     /// convert column of logical coordinates to filter height and width
@@ -212,11 +216,21 @@ struct TileMap<layout::TensorNCHW, TileMapType::kRow2IHW_Col2OHW> {
     TensorCoord operator()(MatrixCoord const& coord,
                            TensorCoord const& src) const {
         int h = 0, w = 0;
-        fast_divmod(h, w, coord.column(), wo_mul_, wo_shr_);
+        fast_divmod(h, w, coord.column(), wo_, wo_mul_, wo_shr_);
         h = src.h() - h * sh_ + ph_;
         w = src.w() - w * sw_ + pw_;
         return TensorCoord{0, h, w, 0};
     }
+};
+
+template <>
+struct TileMap<layout::TensorNCHW, TileMapType::kRow2N_Col2HW> {
+    using Layout = layout::TensorNCHW;
+    using Index = typename Layout::Index;
+    using TensorCoord = typename Layout::TensorCoord;
+    static const int kStrideAxis = 2;
+    CUTLASS_HOST_DEVICE
+    TileMap() = default;
 };
 
 struct ExtraParamZeroPoint {

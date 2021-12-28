@@ -20,6 +20,7 @@
 # STRICT LIABILITY, OR TOR (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+set (CMAKE_CUDA_STANDARD 14)
 cutlass_test_unit_add_executable(
   cutlass_test_unit_convolution_device
 
@@ -49,4 +50,6 @@ cutlass_test_unit_add_executable(
   convolution_s8nhwc_s8ncxhwx_s8nhwc_tensor_op_s32_sm75.cu
   convolution_s8nhwc_s8ncxhwx_s8nhwc_tensor_op_s32_sm75_perf.cu
   conv2d_implicit_gemm_s8_sm75.cu
+  depthwise_convolution_f32nchw_f32nchw_f32nchw_simt_f32_sm50.cu
+  depthwise_convolution_f32nchw_f32nchw_f32nchw_simt_f32_sm50_perf.cu
 )

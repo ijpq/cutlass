@@ -58,6 +58,54 @@
 #include "cutlass/tensor_view.h"
 #include "cutlass/util/host_reorder.h"
 
+namespace {
+template <typename Convolution>
+constexpr bool is_depthwise_convolution() {
+    return Convolution::kConvolutionType ==
+           cutlass::conv::ConvType::kDepthwiseConvolution;
+}
+
+struct if_constexpr_identity {
+    template <typename T>
+    decltype(auto) operator()(T&& x) {
+        return std::forward<T>(x);
+    }
+};
+
+template <bool cond>
+struct if_constexpr_impl;
+
+template <>
+struct if_constexpr_impl<true> {
+    template <class Then, class Else>
+    static decltype(auto) run(Then&& then, Else&&) {
+        return then(if_constexpr_identity{});
+    }
+};
+
+template <>
+struct if_constexpr_impl<false> {
+    template <class Then, class Else>
+    static decltype(auto) run(Then&&, Else&& else_) {
+        return else_(if_constexpr_identity{});
+    }
+};
+
+//! functionally equivalent to "if constexpr" in C++17.
+//! then/else callbacks receives an Identity functor as its sole argument.
+//! The functor is useful for masking eager type check on generic lambda,
+//! preventing syntax error on not taken branches.
+template <bool Cond, class Then, class Else>
+decltype(auto) if_constexpr(Then&& then, Else&& else_) {
+    return if_constexpr_impl<Cond>::run(then, else_);
+}
+
+template <bool Cond, class Then>
+decltype(auto) if_constexpr(Then&& then) {
+    return if_constexpr<Cond>(std::forward<Then>(then), [](auto) {});
+}
+}  // namespace
+
 namespace cutlass {
 template <typename Element, typename Layout, int Interleaved>
 void reorder_row(TensorRef<Element, Layout> dest,
@@ -248,14 +296,33 @@ struct Testbed {
 
     /// Initializes data structures
     void initialize(cutlass::conv::Conv2dProblemSize conv_param) {
+        if_constexpr<is_depthwise_convolution<Convolution>()>([&](auto _) {
+            auto&& conv_param_ = _(conv_param);
+            ASSERT_EQ(conv_param_.K, conv_param_.C);
+        });
+
         //
         // Allocate the CONVOLUTION workspace
         //
 
         tensor_src.resize(typename Convolution::LayoutSrc::TensorCoord{
                 conv_param.N, conv_param.H, conv_param.W, conv_param.C});
-        tensor_filter.resize(typename Convolution::LayoutFilter::TensorCoord{
-                conv_param.K, conv_param.R, conv_param.S, conv_param.C});
+        if_constexpr<is_depthwise_convolution<Convolution>()>(
+                [&](auto _) {
+                    auto&& conv_param_ = _(conv_param);
+                    ASSERT_EQ(conv_param_.K, conv_param_.C);
+                    tensor_filter.resize(
+                            typename Convolution::LayoutFilter::TensorCoord{
+                                    conv_param_.K, conv_param_.R, conv_param_.S,
+                                    1});
+                },
+                [&](auto _) {
+                    auto&& conv_param_ = _(conv_param);
+                    tensor_filter.resize(
+                            typename Convolution::LayoutFilter::TensorCoord{
+                                    conv_param_.K, conv_param_.R, conv_param_.S,
+                                    conv_param_.C});
+                });
         tensor_bias.resize(typename Convolution::LayoutBias::TensorCoord{
                 1, 1, 1, conv_param.K});
         tensor_z.resize(typename Convolution::LayoutDst::TensorCoord{
@@ -545,6 +612,11 @@ struct Testbed {
                                   static_cast<int64_t>(conv_param.N) *
                                   conv_param.K * conv_param.P * conv_param.Q *
                                   conv_param.R * conv_param.S * conv_param.C);
+        if_constexpr<is_depthwise_convolution<Convolution>()>([&](auto _) {
+            auto&& conv_param_ = _(conv_param);
+            ops /= static_cast<float>(conv_param_.C);
+        });
+
         std::cout << conv_param << "Time = " << time_ms << "ms"
                   << "\n"
                   << "Performance = " << ops / (time_ms * 1e9) << "Tops"
@@ -1183,6 +1255,117 @@ bool BenchFirstConvolution(int iterations = 1, int batch = 16,
                                            112, 3, 3, 2, 2, 1, 1, mode});
     args.emplace_back(ConvolutionParameter{batch, 768, 1280, 4, 16, 3, 3, 384,
                                            640, 1, 1, 2, 2, 1, 1, mode});
+
+    bool verify = do_verify;
+    int cnt = 0;
+    for (auto arg : args) {
+        for (auto alpha : problem_alpha) {
+            for (auto beta : problem_beta) {
+                for (auto gamma : problem_gamma) {
+                    passed = testbed.perf(
+                            arg, cutlass::from_real<ElementCompute>(alpha),
+                            cutlass::from_real<ElementCompute>(beta),
+                            cutlass::from_real<ElementCompute>(gamma),
+                            iterations, verify);
+
+                    cnt++;
+                    if (cnt >= 5)
+                        verify = false;
+                    if (!passed) {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+
+    return passed;
+}
+
+template <typename Convolution>
+bool TestDepthwiseConvolution() {
+    bool passed = true;
+
+    double problem_alpha[] = {1.0};
+
+    double problem_beta[] = {1.0};
+
+    double problem_gamma[] = {1.0};
+
+    Testbed<Convolution> testbed;
+
+    using ElementCompute =
+            typename Convolution::EpilogueOutputOp::ElementCompute;
+
+    using ConvolutionParameter = cutlass::conv::Conv2dProblemSize;
+    std::vector<ConvolutionParameter> args;
+    cutlass::conv::Mode mode = cutlass::conv::Mode::kCrossCorrelation;
+
+    for (int n : {160, 48, 33}) {
+        for (int g : {3, 7}) {
+            for (int ih : {16}) {
+                for (int iw : {16}) {
+                    for (int fh : {15, 7, 5, 3}) {
+                        for (int ph : {static_cast<int>(fh / 2), 0}) {
+                            for (int sh : {1, 2}) {
+                                int oh = (ih + 2 * ph - fh) / sh + 1;
+                                int ow = (iw + 2 * ph - fh) / sh + 1;
+                                args.emplace_back(ConvolutionParameter{
+                                        n, ih, iw, g, g, fh, fh, oh, ow, ph, ph,
+                                        sh, sh, 1, 1, mode});
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for (auto arg : args) {
+        for (auto alpha : problem_alpha) {
+            for (auto beta : problem_beta) {
+                for (auto gamma : problem_gamma) {
+                    passed = testbed.run(
+                            arg, cutlass::from_real<ElementCompute>(alpha),
+                            cutlass::from_real<ElementCompute>(beta),
+                            cutlass::from_real<ElementCompute>(gamma));
+                    if (!passed) {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    return passed;
+}
+
+template <typename Convolution>
+bool BenchDepthwiseConvolution(int batch = 64, int iterations = 1,
+                               bool do_verify = true) {
+    bool passed = true;
+
+    double problem_alpha[] = {1.0};
+    double problem_beta[] = {0.0};
+    double problem_gamma[] = {0.0};
+
+    Testbed<Convolution> testbed;
+
+    using ElementCompute =
+            typename Convolution::EpilogueOutputOp::ElementCompute;
+
+    using ConvolutionParameter = cutlass::conv::Conv2dProblemSize;
+    std::vector<ConvolutionParameter> args;
+    cutlass::conv::Mode mode = cutlass::conv::Mode::kCrossCorrelation;
+
+    for (int fh : {31, 29, 27, 25, 23, 21, 19, 17, 15, 13, 11, 9, 7, 5, 3}) {
+        int ph = fh / 2;
+        int sh = 1;
+        int oh = (32 + 2 * ph - fh) / sh + 1;
+        int ow = (32 + 2 * ph - fh) / sh + 1;
+        args.emplace_back(ConvolutionParameter{batch, 32, 32, 384, 384, fh, fh,
+                                               oh, ow, ph, ph, sh, sh, 1, 1,
+                                               mode});
+    }
 
     bool verify = do_verify;
     int cnt = 0;
