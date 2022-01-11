@@ -1283,6 +1283,9 @@ struct DefaultConvolution2dFprop<
     static const ImplicitGemmMode kGemmMode = ImplicitGemmMode::GEMM_TN;
     static const ConvType kConvolutionType = ConvType::kDepthwiseConvolution;
 
+    static_assert(platform::is_same<LayoutDst, layout::TensorNCHW>::value,
+                  "LayoutDst must be NCHW.");
+
     // Define the MmaCore components
     using MmaCore = typename cutlass::conv::threadblock::DefaultMmaCore<
             ThreadblockShape, WarpShape, InstructionShape, ElementSrc,

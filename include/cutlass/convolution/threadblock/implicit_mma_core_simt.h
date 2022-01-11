@@ -55,6 +55,7 @@
 #include "cutlass/transform/pitch_linear_thread_map.h"
 #include "cutlass/transform/threadblock/regular_tile_iterator_pitch_linear.h"
 #include "cutlass/transform/threadblock/regular_tile_iterator_pitch_linear_2dthreadtile.h"
+#include "cutlass/convolution/threadblock/regular_tile_iterator_transposed.h"
 
 #include "cutlass/convolution/threadblock/implicit_mma_core.h"
 #include "cutlass/gemm/warp/mma_simt.h"
@@ -524,19 +525,17 @@ struct DefaultMmaCore<Shape_, WarpShape_, gemm::GemmShape<1, 1, 1>, ElementSrc_,
         static TensorCoord initial_offset(int thread_id) {
             TensorCoord coord = ThreadMap::initial_offset(thread_id);
 
-            return TensorCoord(
-                    coord.strided(),
-                    coord.contiguous() * ThreadMap::kElementsPerAccess);
+            return TensorCoord(coord.strided(), coord.contiguous());
         }
     };
 
     using SmemThreadMapSrc = TransposedPitchLinearThreadMapVec;
-//            transform::TransposePitchLinearThreadMapSimt<IteratorThreadMapSrc>;
 
     /// Shared memory iterator to Src Tensor operand
-    using SmemIteratorSrc = transform::threadblock::RegularTileIterator<
-            MatrixShape<Shape::kM, Shape::kK>, ElementSrc, SmemLayoutSrc, 1,
-            SmemThreadMapSrc>;
+    using SmemIteratorSrc =
+            RegularTileIteratorTransposed<MatrixShape<Shape::kM, Shape::kK>,
+                                          ElementSrc, SmemLayoutSrc, 1,
+                                          SmemThreadMapSrc>;
 
     /// Policy of iterator Filter
     using IteratorThreadMapFilter =
