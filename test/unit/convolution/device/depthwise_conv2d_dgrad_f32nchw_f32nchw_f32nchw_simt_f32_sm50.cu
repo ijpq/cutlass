@@ -25,7 +25,8 @@
  *
  **************************************************************************************************/
 /**
- * \file test/unit/convolution/device/simt_int8_iconv_sm61.cu
+ * \file
+ * test/unit/convolution/device/depthwise_conv2d_dgrad_f32nchw_f32nchw_f32nchw_simt_f32_sm50.cu
  *
  * Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
  *
@@ -52,7 +53,7 @@
 #include "cutlass/util/reference/host/tensor_fill.h"
 #include "cutlass/util/tensor_view_io.h"
 
-#include "testbed.h"
+#include "conv2d_dgrad_testbed.h"
 
 #define RUN_DEPTHWISE_CONVOLUTION(stage)                                   \
     do {                                                                   \
@@ -61,7 +62,7 @@
         using ElementBias = float;                                         \
         using ElementCompute = float;                                      \
         using InstructionShape = cutlass::gemm::GemmShape<1, 1, 1>;        \
-        using Convolution = cutlass::conv::device::Convolution<            \
+        using Convolution = cutlass::conv::device::Deconvolution<          \
                 float, cutlass::layout::TensorNCHW, float,                 \
                 cutlass::layout::TensorNCHW, ElementOutput,                \
                 cutlass::layout::TensorNCHW, float,                        \
@@ -73,17 +74,17 @@
                         ElementOutput, 1, ElementAccumulator, ElementBias, \
                         ElementCompute>,                                   \
                 cutlass::conv::threadblock::                               \
-                        DepthwiseConvolutionFpropThreadblockSwizzle,       \
+                        DepthwiseConvolutionDgradThreadblockSwizzle,       \
                 stage, 1, 1, cutlass::conv::SpecialOptimizeDesc::NONE,     \
                 cutlass::arch::OpMultiplyAdd,                              \
                 cutlass::conv::ImplicitGemmMode::GEMM_TN>;                 \
-        EXPECT_TRUE(test::convolution::device::TestDepthwiseConvolution<   \
+        EXPECT_TRUE(test::convolution::device::TestDepthwiseConv2dDgrad<   \
                     Convolution>());                                       \
     } while (0)
 
 ////////////////////////////////////////////////////////////////////////////////
 
-TEST(SM50_Device_Depthwise_Convolution_f32_f32_NCHW_simt_op,
+TEST(SM50_Device_Depthwise_Conv2dDgrad_f32_f32_NCHW_simt_op,
      128x128x8_32x64x8) {
     using ThreadBlockShape = cutlass::gemm::GemmShape<128, 128, 8>;
     using WarpShape = cutlass::gemm::GemmShape<32, 64, 8>;
@@ -91,7 +92,7 @@ TEST(SM50_Device_Depthwise_Convolution_f32_f32_NCHW_simt_op,
     RUN_DEPTHWISE_CONVOLUTION(2);
 }
 
-TEST(SM50_Device_Depthwise_Convolution_f32_f32_NCHW_simt_op,
+TEST(SM50_Device_Depthwise_Conv2dDgrad_f32_f32_NCHW_simt_op,
      128x128x8_64x32x8) {
     using ThreadBlockShape = cutlass::gemm::GemmShape<128, 128, 8>;
     using WarpShape = cutlass::gemm::GemmShape<64, 32, 8>;
@@ -99,49 +100,49 @@ TEST(SM50_Device_Depthwise_Convolution_f32_f32_NCHW_simt_op,
     RUN_DEPTHWISE_CONVOLUTION(2);
 }
 
-TEST(SM50_Device_Depthwise_Convolution_f32_f32_NCHW_simt_op, 64x128x8_32x64x8) {
+TEST(SM50_Device_Depthwise_Conv2dDgrad_f32_f32_NCHW_simt_op, 64x128x8_32x64x8) {
     using ThreadBlockShape = cutlass::gemm::GemmShape<64, 128, 8>;
     using WarpShape = cutlass::gemm::GemmShape<32, 64, 8>;
     RUN_DEPTHWISE_CONVOLUTION(1);
     RUN_DEPTHWISE_CONVOLUTION(2);
 }
 
-TEST(SM50_Device_Depthwise_Convolution_f32_f32_NCHW_simt_op, 128x64x8_32x64x8) {
+TEST(SM50_Device_Depthwise_Conv2dDgrad_f32_f32_NCHW_simt_op, 128x64x8_32x64x8) {
     using ThreadBlockShape = cutlass::gemm::GemmShape<128, 64, 8>;
     using WarpShape = cutlass::gemm::GemmShape<32, 64, 8>;
     RUN_DEPTHWISE_CONVOLUTION(1);
     RUN_DEPTHWISE_CONVOLUTION(2);
 }
 
-TEST(SM50_Device_Depthwise_Convolution_f32_f32_NCHW_simt_op, 32x128x8_32x64x8) {
+TEST(SM50_Device_Depthwise_Conv2dDgrad_f32_f32_NCHW_simt_op, 32x128x8_32x64x8) {
     using ThreadBlockShape = cutlass::gemm::GemmShape<32, 128, 8>;
     using WarpShape = cutlass::gemm::GemmShape<32, 64, 8>;
     RUN_DEPTHWISE_CONVOLUTION(1);
     RUN_DEPTHWISE_CONVOLUTION(2);
 }
 
-TEST(SM50_Device_Depthwise_Convolution_f32_f32_NCHW_simt_op, 128x32x8_64x32x8) {
+TEST(SM50_Device_Depthwise_Conv2dDgrad_f32_f32_NCHW_simt_op, 128x32x8_64x32x8) {
     using ThreadBlockShape = cutlass::gemm::GemmShape<128, 32, 8>;
     using WarpShape = cutlass::gemm::GemmShape<64, 32, 8>;
     RUN_DEPTHWISE_CONVOLUTION(1);
     RUN_DEPTHWISE_CONVOLUTION(2);
 }
 
-TEST(SM50_Device_Depthwise_Convolution_f32_f32_NCHW_simt_op, 32x64x8_32x64x8) {
+TEST(SM50_Device_Depthwise_Conv2dDgrad_f32_f32_NCHW_simt_op, 32x64x8_32x64x8) {
     using ThreadBlockShape = cutlass::gemm::GemmShape<32, 64, 8>;
     using WarpShape = cutlass::gemm::GemmShape<32, 64, 8>;
     RUN_DEPTHWISE_CONVOLUTION(1);
     RUN_DEPTHWISE_CONVOLUTION(2);
 }
 
-TEST(SM50_Device_Depthwise_Convolution_f32_f32_NCHW_simt_op, 64x32x8_64x32x8) {
+TEST(SM50_Device_Depthwise_Conv2dDgrad_f32_f32_NCHW_simt_op, 64x32x8_64x32x8) {
     using ThreadBlockShape = cutlass::gemm::GemmShape<64, 32, 8>;
     using WarpShape = cutlass::gemm::GemmShape<64, 32, 8>;
     RUN_DEPTHWISE_CONVOLUTION(1);
     RUN_DEPTHWISE_CONVOLUTION(2);
 }
 
-TEST(SM50_Device_Depthwise_Convolution_f32_f32_NCHW_simt_op, 32x32x8_32x32x8) {
+TEST(SM50_Device_Depthwise_Conv2dDgrad_f32_f32_NCHW_simt_op, 32x32x8_32x32x8) {
     using ThreadBlockShape = cutlass::gemm::GemmShape<32, 32, 8>;
     using WarpShape = cutlass::gemm::GemmShape<32, 32, 8>;
     RUN_DEPTHWISE_CONVOLUTION(1);

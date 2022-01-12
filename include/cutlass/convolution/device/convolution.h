@@ -162,7 +162,6 @@ public:
                     EpilogueOutputOp, ThreadblockSwizzle, kStages, Operator,
                     kAlignmentSrc, kAlignmentFilter, kSpecialOpt, kGemmMode,
                     WithoutSharedLoad, kConvolutionType>::Kernel;
-
     using TensorRefSrc = typename ConvolutionKernel::TensorRefSrc;
     using TensorRefFilter = typename ConvolutionKernel::TensorRefFilter;
     using TensorRefBias = typename ConvolutionKernel::TensorRefBias;
@@ -397,8 +396,8 @@ public:
                     ElementDst, LayoutDst, ElementAccumulator, OperatorClass,
                     ArchTag, ThreadblockShape, WarpShape, InstructionShape,
                     EpilogueOutputOp, ThreadblockSwizzle, kStages, Operator,
-                    kAlignmentSrc, kAlignmentFilter, kSpecialOpt,
-                    kGemmMode>::Kernel;
+                    kAlignmentSrc, kAlignmentFilter, kSpecialOpt, kGemmMode,
+                    kConvolutionType>::Kernel;
 
     using TensorRefSrc = typename ConvolutionKernel::TensorRefSrc;
     using TensorRefFilter = typename ConvolutionKernel::TensorRefFilter;

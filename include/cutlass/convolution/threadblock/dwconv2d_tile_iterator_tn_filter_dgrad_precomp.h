@@ -26,7 +26,7 @@
  **************************************************************************************************/
 /**
  * \file
- * include/cutlass/convolution/threadblock/dwconv2d_tile_iterator_tn_filter_fprop_precomp.h
+ * include/cutlass/convolution/threadblock/dwconv2d_tile_iterator_tn_filter_dgrad_precomp.h
  *
  * Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
  *
@@ -50,86 +50,23 @@
 #include "cutlass/layout/matrix.h"
 #include "cutlass/conv/conv2d_problem_size.h"
 
+#include "cutlass/convolution/threadblock/dwconv2d_tile_iterator_tn_filter_fprop_precomp.h"
+
 ////////////////////////////////////////////////////////////////////////////////
 
 namespace cutlass {
 namespace conv {
 namespace threadblock {
 
-/////////////////////////////////////////////////////////////////////////////////////////////////
-/// Strip-mines a pitch-linear tile among a given number of threads, first along
-/// the contiguous dimension then along the strided dimension, while each thread
-/// access ElementsPerAccess elements.
-template <typename Shape_, int Threads, int ElementsPerAccess = 1>
-struct PitchLinearStripminedThreadMapStrided {
-    /// Tensor coordinate
-    using TensorCoord = layout::PitchLinearCoord;
-
-    /// Tile shape
-    using Shape = Shape_;
-
-    /// Number of threads total
-    static int const kThreads = Threads;
-
-    static_assert(Shape::kStrided <= kThreads,
-                  "Stride of shape must be less than thread count");
-
-    /// Extract vector length from Layout
-    static int const kElementsPerAccess = ElementsPerAccess;
-
-    /// Shape of access by each thread
-    using ThreadAccessShape = layout::PitchLinearShape<kElementsPerAccess, 1>;
-
-    /// Internal implementation details
-    struct Detail {
-        static_assert(!(Shape::kContiguous % kElementsPerAccess), "");
-
-        static_assert(!((Shape::kContiguous * Shape::kStrided) %
-                        (kThreads * kElementsPerAccess)),
-                      "Shape must be divisible thread count.");
-
-        /// Shape of the tile in units of vectors
-        using ShapeVec = layout::PitchLinearShape<
-                Shape::kContiguous / kElementsPerAccess, Shape::kStrided>;
-
-        static_assert(kThreads >= ShapeVec::kStrided &&
-                              !(kThreads % ShapeVec::kStrided),
-                      "Thread count must be divisible by stride of shape");
-    };
-
-    using ThreadArrangement =
-            layout::PitchLinearShape<kThreads / Detail::ShapeVec::kStrided,
-                                     Detail::ShapeVec::kStrided>;
-
-    /// Number of iterations by each thread
-    using Iterations = layout::PitchLinearShape<
-            Detail::ShapeVec::kContiguous / ThreadArrangement::kContiguous, 1>;
-
-    /// Interval between accesses along each dimension of the tensor's logical
-    /// coordinate space (in units of Elements)
-    using Delta = layout::PitchLinearShape<ThreadArrangement::kContiguous *
-                                                   kElementsPerAccess,
-                                           ThreadArrangement::kStrided>;
-
-    /// Maps thread ID to a coordinate offset within the tensor's logical
-    /// coordinate space (in units of Elements)
-    CUTLASS_HOST_DEVICE
-    static TensorCoord initial_offset(int thread_id) {
-        return TensorCoord((thread_id % ThreadArrangement::kContiguous) *
-                                   kElementsPerAccess,
-                           thread_id / ThreadArrangement::kContiguous);
-    }
-};
-
 ////////////////////////////////////////////////////////////////////////////////
 
 template <typename Shape, typename Element, typename Layout, typename ThreadMap,
           int AccessSize>
-class Dwconv2dTileFilterIteratorFpropPrecomp;
+class Dwconv2dTileFilterIteratorDgradPrecomp;
 
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Specialization of Dwconv2dTileFilterIteratorFpropPrecomp for
+/// Specialization of Dwconv2dTileFilterIteratorFdgradPrecomp for
 /// TensorNCHW Layout. Satisfies: ForwardTileIteratorConcept |
 ///            ReadableContiguousTileIteratorConcept |
 ///            WriteableContiguousTileIteratorConcept |
@@ -137,14 +74,14 @@ class Dwconv2dTileFilterIteratorFpropPrecomp;
 ///
 template <typename Shape_, typename Element_, typename ThreadMap_,
           int AccessSize>
-class Dwconv2dTileFilterIteratorFpropPrecomp<
+class Dwconv2dTileFilterIteratorDgradPrecomp<
         Shape_, Element_, layout::TensorNCHW, ThreadMap_, AccessSize> {
 public:
     using Shape = layout::PitchLinearShape<Shape_::kColumn, Shape_::kRow>;
     using Element = Element_;
     using Layout = layout::TensorNCHW;
     using ThreadMap = ThreadMap_;
-    using TileMap = TileMap<Layout, TileMapType::kRow2IHW_Col2OHW>;
+    using TileMap = TileMap<Layout, TileMapType::kRow2OHW_Col2IHW>;
 
     using Index = typename Layout::Index;
     using LongIndex = typename Layout::LongIndex;
@@ -192,7 +129,7 @@ public:
 
     class Params {
     public:
-        friend Dwconv2dTileFilterIteratorFpropPrecomp;
+        friend Dwconv2dTileFilterIteratorDgradPrecomp;
 
     private:
         TileMap tile_map_;
@@ -242,13 +179,13 @@ private:
 private:
     CUTLASS_DEVICE
     void initialize_filter_coordinates_(LogicalCoord const& thread_offset) {
-        auto src = params_.tile_map_(thread_offset.row());
-        filter_w_ = src.column();
+        auto grad = params_.tile_map_(thread_offset.row());
+        filter_w_ = grad.column();
         CUTLASS_PRAGMA_UNROLL
         for (int c = 0; c < ThreadMap::Iterations::kContiguous; ++c) {
             Index column =
                     c * ThreadMap::Delta::kContiguous + thread_offset.column();
-            auto coord = params_.tile_map_(column, src);
+            auto coord = params_.tile_map_(column, grad);
             filter_r_[c] = coord.row();
             filter_s_[c] = coord.column();
         }
@@ -258,7 +195,7 @@ public:
     /// Constructs a TileIterator from its precomputed state, threadblock
     /// offset, and thread ID
     CUTLASS_HOST_DEVICE
-    Dwconv2dTileFilterIteratorFpropPrecomp(
+    Dwconv2dTileFilterIteratorDgradPrecomp(
             /// Precomputed parameters object
             Params const& params,
             /// Pointer to start of tensor
@@ -290,16 +227,16 @@ public:
         residue_extent_ = residue_extent_ - thread_offset.row();
     }
 
-    /// Construct a Dwconv2dTileFilterIteratorFpropPrecomp with zero threadblock
+    /// Construct a Dwconv2dTileFilterIteratorDgradPrecomp with zero threadblock
     /// offset
     CUTLASS_HOST_DEVICE
-    Dwconv2dTileFilterIteratorFpropPrecomp(
+    Dwconv2dTileFilterIteratorDgradPrecomp(
             Params const& params,  ///< Precomputed parameters object
             Pointer pointer,       ///< Pointer to start of tensor
             LogicalCoord extent,   ///< Extent of tensor
             int thread_id          ///< ID of each participating thread
             )
-            : Dwconv2dTileFilterIteratorFpropPrecomp(
+            : Dwconv2dTileFilterIteratorDgradPrecomp(
                       params, pointer, extent, thread_id, make_Coord(0, 0)) {}
 
     /// Adds a pointer offset in units of Element
@@ -312,7 +249,7 @@ public:
     ///
     /// Just update filter's coordinates
     CUTLASS_HOST_DEVICE
-    Dwconv2dTileFilterIteratorFpropPrecomp& operator++() {
+    Dwconv2dTileFilterIteratorDgradPrecomp& operator++() {
         int increment = Shape::kStrided;
         if (is_residue_tile_) {
             increment = residue_offset_;
@@ -320,14 +257,14 @@ public:
         auto inc_coord = params_.tile_map_(increment);
 
         filter_w_ += inc_coord.column();
-        if (filter_w_ >= params_.tile_map_.wi_) {
-            filter_w_ -= params_.tile_map_.wi_;
-            inc_coord += MatrixCoord{1, -params_.tile_map_.wi_};
+        if (filter_w_ >= params_.tile_map_.wo_) {
+            filter_w_ -= params_.tile_map_.wo_;
+            inc_coord += MatrixCoord{1, -params_.tile_map_.wo_};
         }
         CUTLASS_PRAGMA_UNROLL
         for (int i = 0; i < kAccessCount; ++i) {
-            filter_r_[i] += inc_coord.row();
-            filter_s_[i] += inc_coord.column();
+            filter_r_[i] -= inc_coord.row() * params_.tile_map_.sh_;
+            filter_s_[i] -= inc_coord.column() * params_.tile_map_.sw_;
         }
         is_residue_tile_ = false;
         return *this;
@@ -336,8 +273,8 @@ public:
     /// Advances to the next tile in memory.
     ///
     CUTLASS_HOST_DEVICE
-    Dwconv2dTileFilterIteratorFpropPrecomp operator++(int) {
-        Dwconv2dTileFilterIteratorFpropPrecomp self(*this);
+    Dwconv2dTileFilterIteratorDgradPrecomp operator++(int) {
+        Dwconv2dTileFilterIteratorDgradPrecomp self(*this);
         operator++();
         return self;
     }
@@ -426,7 +363,7 @@ public:
         }
     }
 
-    CUTLASS_DEVICE Dwconv2dTileFilterIteratorFpropPrecomp& add_coord_offset(
+    CUTLASS_DEVICE Dwconv2dTileFilterIteratorDgradPrecomp& add_coord_offset(
             TensorCoord const& coord_offset) {
         auto size = params_.layout_(coord_offset);
         add_pointer_offset(params_.layout_(coord_offset));

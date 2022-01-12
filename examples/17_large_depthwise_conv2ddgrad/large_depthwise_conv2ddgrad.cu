@@ -91,12 +91,12 @@ using EpilogueOp = cutlass::epilogue::thread::BiasAddLinearCombination<
         ElementComputeEpilogue>;  // Data type for alpha/beta in linear
                                   // combination
 
-using Convolution = cutlass::conv::device::Convolution<
+using Convolution = cutlass::conv::device::Deconvolution<
         ElementSrc, LayoutSrc, ElementFilter, LayoutFilter, ElementDst,
         LayoutDst, ElementDst, LayoutDst, ElementDst,
         cutlass::conv::ConvType::kDepthwiseConvolution, MMAOp, SmArch,
         ThreadblockShape, WarpShape, InstructionShape, EpilogueOp,
-        SwizzleThreadBlock, NumStages, 1, 1,
+        SwizzleThreadBlock, NumStages, 4, 1,
         cutlass::conv::SpecialOptimizeDesc::NONE, cutlass::arch::OpMultiplyAdd,
         cutlass::conv::ImplicitGemmMode::GEMM_TN>;
 
@@ -213,8 +213,9 @@ struct Options {
 
     /// Prints the usage statement.
     std::ostream& print_usage(std::ostream& out) const {
-        out << "16_large_depthwise_conv2dfprop example\n\n"
-            << "  This example uses Large Kernel Depthwise Convolution on FP32 "
+        out << "17_large_depthwise_conv2ddgrad example\n\n"
+            << "  This example uses Large Kernel Depthwise Conv2d Dgrad on "
+               "FP32 "
                "data"
                "types to compute\n"
             << "  forward convolution on tensors of layout NCHW.\n\n"
@@ -245,12 +246,12 @@ struct Options {
 
         out << "\n\nExamples:\n\n"
             << "$ "
-               "./examples/16_large_depthwise_conv2dfprop/"
-               "16_large_depthwise_conv2dfprop  --n=64 --h=32 --w=32 --g=384 "
+               "./examples/17_large_depthwise_conv2ddgrad/"
+               "17_large_depthwise_conv2ddgrad  --n=64 --h=32 --w=32 --g=384 "
                "--r=1 --s=1\n\n"
             << "$ "
-               "./examples/16_large_depthwise_conv2dfprop/"
-               "16_large_depthwise_conv2dfprop  --n=64 --h=32 --w=32 --g=384 "
+               "./examples/17_large_depthwise_conv2ddgrad/"
+               "17_large_depthwise_conv2ddgrad  --n=64 --h=32 --w=32 --g=384 "
                "--r=31 --s=31 --ref-check\n\n";
 
         return out;
@@ -334,7 +335,8 @@ Result profile_convolution(Options const& options) {
     // Allocate host-device tensors using the CUTLASS Utilities.
     //
 
-    cutlass::HostTensor<ElementSrc, LayoutSrc> tensor_src(options.input_size);
+    cutlass::HostTensor<ElementSrc, LayoutSrc> tensor_src(
+            options.output_size());
     cutlass::HostTensor<ElementFilter, LayoutFilter> tensor_filter(
             options.filter_size);
     cutlass::HostTensor<typename Convolution::ElementDst,
@@ -342,13 +344,13 @@ Result profile_convolution(Options const& options) {
             tensor_bias;
     cutlass::HostTensor<typename Convolution::ElementDst,
                         typename Convolution::LayoutDst>
-            tensor_z(options.output_size());
+            tensor_z(options.input_size);
     cutlass::HostTensor<typename Convolution::ElementDst,
                         typename Convolution::LayoutDst>
-            tensor_dst(options.output_size());
+            tensor_dst(options.input_size);
     cutlass::HostTensor<typename Convolution::ElementDst,
                         typename Convolution::LayoutDst>
-            tensor_ref_dst(options.output_size());
+            tensor_ref_dst(options.input_size);
 
     //
     // Initialize tensors
@@ -429,7 +431,7 @@ Result profile_convolution(Options const& options) {
                 options.filter_size.n());
 
         // Compute with reference implementation
-        cutlass::reference::host::Convolution<
+        cutlass::reference::host::Deconv2d<
                 Convolution::kConvolutionType, typename Convolution::ElementSrc,
                 typename Convolution::LayoutSrc,
                 typename Convolution::ElementFilter,
@@ -468,7 +470,7 @@ Result profile_convolution(Options const& options) {
     if (options.save_workspace) {
         std::stringstream ss;
 
-        ss << "16_workspace_large_depthwise_conv2dfprop_"
+        ss << "17_workspace_large_depthwise_conv2ddgrad_"
            << options.input_size.n() << "x" << options.input_size.h() << "x"
            << options.input_size.w() << "x" << options.input_size.c() << "_"
            << options.filter_size.n() << "x" << options.filter_size.h() << "x"

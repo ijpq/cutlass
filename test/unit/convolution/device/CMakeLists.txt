@@ -27,29 +27,31 @@ cutlass_test_unit_add_executable(
   BATCH_SOURCES ON
   BATCH_SIZE 4
 
-  simt_int8_chwn4_iconv_sm61.cu
-  simt_int8_chwn4_iconv_sm61_perf.cu
-  simt_int8_nchw4_iconv_sm61.cu
-  simt_int8_s8nchw4_s8nchw4_f32nchw_iconv_sm61.cu
-  simt_int8_s8nchw4_s8nchw4_f32nchw_iconv_sm61_perf.cu
-  simt_int8_nchw4_iconv_sm61_perf.cu
-  simt_int8_s8nchw4_s8nchw4_s8nchw32_iconv_sm61_perf.cu
-  simt_int8_s8nchw4_s8nchw4_s8nchw32_iconv_sm61.cu
-  simt_int8_s8nchw4_s8nchw4_s4nhwc_iconv_sm75.cu
-  simt_int8_s8nchw4_s8nchw4_u4nhwc_iconv_sm75.cu
-  simt_int8_s8nchw4_s8nchw4_s4nhwc_iconv_sm75_perf.cu
-  convolution_s8nchw32_s8chwn32_s8nchw32_tensor_op_s32_sm75_perf.cu
-  convolution_s8nchw32_s8chwn32_s8nchw32_tensor_op_s32_sm75.cu
-  convolution_s8nchw32_s8chwn32_s8nchw4_tensor_op_s32_sm75_perf.cu
-  convolution_s8nchw32_s8chwn32_s8nchw4_tensor_op_s32_sm75.cu
-  convolution_s4nchw64_s4chwn64_s4nchw64_tensor_op_s32_sm75.cu
-  convolution_s4nchw64_s4chwn64_s4nchw64_tensor_op_s32_sm75_perf.cu
-  convolution_u4nchw64_s4chwn64_s4nchw64_tensor_op_s32_sm75.cu
-  convolution_s4nhwc_s4ncxhwx_s4nhwc_tensor_op_s32_sm75.cu
-  convolution_s4nhwc_s4ncxhwx_s4nhwc_tensor_op_s32_sm75_perf.cu
-  convolution_s8nhwc_s8ncxhwx_s8nhwc_tensor_op_s32_sm75.cu
-  convolution_s8nhwc_s8ncxhwx_s8nhwc_tensor_op_s32_sm75_perf.cu
-  conv2d_implicit_gemm_s8_sm75.cu
-  depthwise_convolution_f32nchw_f32nchw_f32nchw_simt_f32_sm50.cu
-  depthwise_convolution_f32nchw_f32nchw_f32nchw_simt_f32_sm50_perf.cu
+  #  simt_int8_chwn4_iconv_sm61.cu
+  #  simt_int8_chwn4_iconv_sm61_perf.cu
+  #  simt_int8_nchw4_iconv_sm61.cu
+  #  simt_int8_s8nchw4_s8nchw4_f32nchw_iconv_sm61.cu
+  #  simt_int8_s8nchw4_s8nchw4_f32nchw_iconv_sm61_perf.cu
+  #  simt_int8_nchw4_iconv_sm61_perf.cu
+  #  simt_int8_s8nchw4_s8nchw4_s8nchw32_iconv_sm61_perf.cu
+  #  simt_int8_s8nchw4_s8nchw4_s8nchw32_iconv_sm61.cu
+  #  simt_int8_s8nchw4_s8nchw4_s4nhwc_iconv_sm75.cu
+  #  simt_int8_s8nchw4_s8nchw4_u4nhwc_iconv_sm75.cu
+  #  simt_int8_s8nchw4_s8nchw4_s4nhwc_iconv_sm75_perf.cu
+  #  convolution_s8nchw32_s8chwn32_s8nchw32_tensor_op_s32_sm75_perf.cu
+  #  convolution_s8nchw32_s8chwn32_s8nchw32_tensor_op_s32_sm75.cu
+  #  convolution_s8nchw32_s8chwn32_s8nchw4_tensor_op_s32_sm75_perf.cu
+  #  convolution_s8nchw32_s8chwn32_s8nchw4_tensor_op_s32_sm75.cu
+  #  convolution_s4nchw64_s4chwn64_s4nchw64_tensor_op_s32_sm75.cu
+  #  convolution_s4nchw64_s4chwn64_s4nchw64_tensor_op_s32_sm75_perf.cu
+  #  convolution_u4nchw64_s4chwn64_s4nchw64_tensor_op_s32_sm75.cu
+  #  convolution_s4nhwc_s4ncxhwx_s4nhwc_tensor_op_s32_sm75.cu
+  #  convolution_s4nhwc_s4ncxhwx_s4nhwc_tensor_op_s32_sm75_perf.cu
+  #  convolution_s8nhwc_s8ncxhwx_s8nhwc_tensor_op_s32_sm75.cu
+  #  convolution_s8nhwc_s8ncxhwx_s8nhwc_tensor_op_s32_sm75_perf.cu
+  #  conv2d_implicit_gemm_s8_sm75.cu
+  depthwise_conv2d_fprop_f32nchw_f32nchw_f32nchw_simt_f32_sm50.cu
+  depthwise_conv2d_fprop_f32nchw_f32nchw_f32nchw_simt_f32_sm50_perf.cu
+  depthwise_conv2d_dgrad_f32nchw_f32nchw_f32nchw_simt_f32_sm50.cu
+  depthwise_conv2d_dgrad_f32nchw_f32nchw_f32nchw_simt_f32_sm50_perf.cu
 )

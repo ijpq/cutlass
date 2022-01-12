@@ -76,12 +76,15 @@ enum class TileMapType {
                        ///< height x width)
     kRow2NHW_Col2C,    ///< Row map to NHW(batch x height x width), Column
                        ///< map to channel
-    kRow2IHW_Col2OHW,  ///< Row map to IHW (input height xinput width), Column
+    kRow2IHW_Col2OHW,  ///< Row map to IHW (input height x input width), Column
                        ///< map to OHW (output height x output width), used for
                        ///< visiting weight of depthwise conv2d
     kRow2N_Col2HW,     ///< Row map to batch dimension, Column map to HW (input
                     ///< height x input width), used for visiting input tensor
                     ///< of depthwise conv2d
+    kRow2OHW_Col2IHW,  ///< Row map to OHW (output height x input width), Column
+                       ///< map to IHW (input height x output width), used for
+                       ///< visiting weight of depthwise conv2d
 };
 
 template <typename Layout, TileMapType tile_map_type_>
@@ -206,20 +209,20 @@ struct TileMap<layout::TensorNCHW, TileMapType::kRow2IHW_Col2OHW> {
     }
     /// convert row of logical coordinates to src height and width
     CUTLASS_HOST_DEVICE
-    TensorCoord operator()(MatrixCoord const& coord) const {
+    MatrixCoord operator()(Index const& dividend) const {
         int h, w;
-        fast_divmod(h, w, coord.row(), wi_, wi_mul_, wi_shr_);
-        return TensorCoord{0, h, w, 0};
+        fast_divmod(h, w, dividend, wi_, wi_mul_, wi_shr_);
+        return MatrixCoord{h, w};
     }
     /// convert column of logical coordinates to filter height and width
     CUTLASS_HOST_DEVICE
-    TensorCoord operator()(MatrixCoord const& coord,
-                           TensorCoord const& src) const {
+    MatrixCoord operator()(Index const& dividend,
+                           MatrixCoord const& src) const {
         int h = 0, w = 0;
-        fast_divmod(h, w, coord.column(), wo_, wo_mul_, wo_shr_);
-        h = src.h() - h * sh_ + ph_;
-        w = src.w() - w * sw_ + pw_;
-        return TensorCoord{0, h, w, 0};
+        fast_divmod(h, w, dividend, wo_, wo_mul_, wo_shr_);
+        h = src.row() - h * sh_ + ph_;
+        w = src.column() - w * sw_ + pw_;
+        return MatrixCoord{h, w};
     }
 };
 
@@ -231,6 +234,54 @@ struct TileMap<layout::TensorNCHW, TileMapType::kRow2N_Col2HW> {
     static const int kStrideAxis = 2;
     CUTLASS_HOST_DEVICE
     TileMap() = default;
+};
+
+template <>
+struct TileMap<layout::TensorNCHW, TileMapType::kRow2OHW_Col2IHW> {
+    using Layout = layout::TensorNCHW;
+    using TensorCoord = typename Layout::TensorCoord;
+    using Index = Layout::Index;
+    /// has no trivial strided axis
+    static const int kStrideAxis = -1;
+    Index wi_, wo_;
+    Index sh_, sw_;
+    Index ph_, pw_;
+    unsigned int wi_mul_, wi_shr_, wo_mul_, wo_shr_;
+    CUTLASS_HOST_DEVICE
+    TileMap()
+            : wi_(0),
+              wo_(0),
+              sh_(0),
+              sw_(0),
+              ph_(0),
+              pw_(0),
+              wi_mul_(0),
+              wi_shr_(0),
+              wo_mul_(0),
+              wo_shr_(0) {}
+    CUTLASS_HOST_DEVICE
+    TileMap(Index wi, Index wo, Index sh, Index sw, Index ph, Index pw)
+            : wi_(wi), wo_(wo), sh_(sh), sw_(sw), ph_(ph), pw_(pw) {
+        find_divisor(wi_mul_, wi_shr_, wi);
+        find_divisor(wo_mul_, wo_shr_, wo);
+    }
+    /// convert row of logical coordinates to src height and width
+    CUTLASS_HOST_DEVICE
+    MatrixCoord operator()(Index const& dividend) const {
+        int h, w;
+        fast_divmod(h, w, dividend, wo_, wo_mul_, wo_shr_);
+        return MatrixCoord{h, w};
+    }
+    /// convert column of logical coordinates to filter height and width
+    CUTLASS_HOST_DEVICE
+    MatrixCoord operator()(Index const& dividend,
+                           MatrixCoord const& grad) const {
+        int h = 0, w = 0;
+        fast_divmod(h, w, dividend, wi_, wi_mul_, wi_shr_);
+        h = h - grad.row() * sh_ + ph_;
+        w = w - grad.column() * sw_ + pw_;
+        return MatrixCoord{h, w};
+    }
 };
 
 struct ExtraParamZeroPoint {

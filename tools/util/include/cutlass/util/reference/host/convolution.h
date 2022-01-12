@@ -307,6 +307,96 @@ void Depsep_Fprop(
     }
 }
 
+/// Depthwise-separable convolution
+template <typename ElementSrc, typename LayoutSrc, typename ElementFilter,
+          typename LayoutFilter, typename ElementDst, typename LayoutDst,
+          typename ElementBias, typename LayoutBias,
+          typename ElementAccumulator, typename ElementCompute,
+          typename ConvertOp = NumericConverter<ElementDst, ElementCompute>,
+          typename InnerProductOp = multiply_add<ElementAccumulator>>
+void Depsep_Dgrad(
+        conv::Conv2dProblemSize conv_param,
+        cutlass::TensorRef<ElementSrc, LayoutSrc> tensor_src,
+        cutlass::TensorRef<ElementFilter, LayoutFilter> tensor_filter,
+        cutlass::TensorRef<ElementBias, LayoutBias> tensor_bias,
+        cutlass::TensorRef<ElementDst, LayoutDst> tensor_z,
+        cutlass::TensorRef<ElementDst, LayoutDst> tensor_dst,
+        ElementCompute alpha, ElementCompute beta, ElementCompute gamma,
+        cutlass::conv::Mode mode = cutlass::conv::Mode::kCrossCorrelation) {
+    ConvertOp convert_op;
+    InnerProductOp inner_product_op;
+
+    int const N = conv_param.N;
+    int const G = conv_param.K;
+    int const H = conv_param.H;
+    int const W = conv_param.W;
+    int const P = conv_param.P;
+    int const Q = conv_param.Q;
+    int const R = conv_param.R;
+    int const S = conv_param.S;
+    int const PH = conv_param.pad_h;
+    int const PW = conv_param.pad_w;
+    int const SH = conv_param.stride_h;
+    int const SW = conv_param.stride_w;
+    int const DH = conv_param.dilation_h;
+    int const DW = conv_param.dilation_w;
+
+    // Apply MMA and accumulate ElementAccumulator
+    for (int n = 0; n < N; ++n) {
+        for (int h = 0; h < H; ++h) {
+            for (int w = 0; w < W; ++w) {
+                for (int g = 0; g < G; ++g) {
+                    ElementAccumulator acc = ElementAccumulator();
+                    for (int r = 0; r < R; ++r) {
+                        for (int s = 0; s < S; ++s) {
+                            int filter_r = r;
+                            int filter_s = s;
+                            if (conv_param.mode ==
+                                cutlass::conv::Mode::kConvolution) {
+                                filter_r = R - 1 - r;
+                                filter_s = S - 1 - s;
+                            }
+
+                            int p = h + PH - filter_r * DH;
+                            int q = w + PW - filter_s * DW;
+
+                            if (p >= 0 && (p % SH) == 0 && q >= 0 &&
+                                (q % SW) == 0) {
+                                p = p / SH;
+                                q = q / SW;
+
+                                if (p < P && q < Q) {
+                                    ElementSrc sv = tensor_src.at({n, p, q, g});
+
+                                    ElementFilter fv = tensor_filter.at(
+                                            {g, filter_r, filter_s, 0});
+                                    acc = inner_product_op(
+                                            ElementAccumulator(sv),
+                                            ElementAccumulator(fv), acc);
+                                }
+                            }
+                        }
+                    }
+
+                    // Apply Epilogue, compute ElementCompute, convert and
+                    // store ElementC
+                    ElementCompute intermediate = alpha * ElementCompute(acc);
+                    if (beta != ElementCompute()) {
+                        intermediate += beta * tensor_bias.at({0, 0, 0, g});
+                    }
+                    if (gamma != ElementCompute()) {
+                        intermediate += gamma * tensor_z.at({n, h, w, g});
+                    }
+                    if (detail::need_round<ElementDst, ElementCompute>::value) {
+                        intermediate = std::round(intermediate);
+                    }
+                    tensor_dst.at({n, h, w, g}) = convert_op(intermediate);
+                }
+            }
+        }
+    }
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 /// Dgrad
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -376,8 +466,8 @@ void Conv2dDgrad(cutlass::conv::Conv2dProblemSize problem_size,
                         }      // for (S)
                     }          // for (R)
 
-                    // Apply Epilogue, compute ElementCompute, convert and store
-                    // ElementC
+                    // Apply Epilogue, compute ElementCompute, convert and
+                    // store ElementC
                     ElementC c_ref = ElementC();
 
                     if (beta != ElementCompute()) {
@@ -462,8 +552,8 @@ void Conv2dWgrad(cutlass::conv::Conv2dProblemSize problem_size,
                         }
                     }
 
-                    // Apply Epilogue, compute ElementCompute, convert and store
-                    // ElementC
+                    // Apply Epilogue, compute ElementCompute, convert and
+                    // store ElementC
                     ElementC c_ref = ElementC();
 
                     if (beta != ElementCompute()) {
@@ -481,7 +571,8 @@ void Conv2dWgrad(cutlass::conv::Conv2dProblemSize problem_size,
     }              // for (K)
 }
 
-/// Generic 2D convolution targeting Conv2dFprop, Conv2dDgrad, and Conv2dWgrad.
+/// Generic 2D convolution targeting Conv2dFprop, Conv2dDgrad, and
+/// Conv2dWgrad.
 template <typename ElementA, typename LayoutA, typename ElementB,
           typename LayoutB, typename ElementC, typename LayoutC,
           typename ElementCompute, typename ElementAccumulator = ElementCompute,
@@ -593,8 +684,8 @@ void Conv3dFprop(conv::Conv3dProblemSize problem_size,
                             }
                         }
 
-                        // Apply Epilogue, compute ElementCompute, convert and
-                        // store ElementC
+                        // Apply Epilogue, compute ElementCompute, convert
+                        // and store ElementC
                         ElementC c_ref = ElementC();
 
                         if (beta != ElementCompute()) {
@@ -696,8 +787,8 @@ void Conv3dDgrad(cutlass::conv::Conv3dProblemSize problem_size,
                             }          // for (R)
                         }              // for (T)
 
-                        // Apply Epilogue, compute ElementCompute, convert and
-                        // store ElementC
+                        // Apply Epilogue, compute ElementCompute, convert
+                        // and store ElementC
                         ElementC c_ref = ElementC();
 
                         if (beta != ElementCompute()) {
@@ -800,8 +891,8 @@ void Conv3dWgrad(cutlass::conv::Conv3dProblemSize problem_size,
                             }
                         }
 
-                        // Apply Epilogue, compute ElementCompute, convert and
-                        // store ElementC
+                        // Apply Epilogue, compute ElementCompute, convert
+                        // and store ElementC
                         ElementC c_ref = ElementC();
 
                         if (beta != ElementCompute()) {
@@ -822,7 +913,8 @@ void Conv3dWgrad(cutlass::conv::Conv3dProblemSize problem_size,
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-/// Generic 3D convolution targeting Conv2dFprop, Conv2dDgrad, and Conv2dWgrad.
+/// Generic 3D convolution targeting Conv2dFprop, Conv2dDgrad, and
+/// Conv2dWgrad.
 template <typename ElementA, typename LayoutA, typename ElementB,
           typename LayoutB, typename ElementC, typename LayoutC,
           typename ElementCompute, typename ElementAccumulator = ElementCompute,
@@ -998,8 +1090,8 @@ void compute_convolution(conv::Conv2dProblemSize conv_param, ScalarType alpha,
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/// Computes a general matrix product among matrices (tensors of rank=2) pointed
-/// to by TensorRef objects.
+/// Computes a general matrix product among matrices (tensors of rank=2)
+/// pointed to by TensorRef objects.
 template <conv::ConvType ConvolutionType, typename ElementSrc,
           typename LayoutSrc, typename ElementFilter, typename LayoutFilter,
           typename ElementDst, typename LayoutDst, typename ElementBias,
@@ -1558,6 +1650,67 @@ struct Convolution<conv::ConvType::kDepthwiseConvolution, ElementSrc, LayoutSrc,
                 tensor_dst, alpha, beta, gamma);
     }
 };
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
+template <conv::ConvType ConvolutionType, typename ElementSrc,
+          typename LayoutSrc, typename ElementFilter, typename LayoutFilter,
+          typename ElementDst, typename LayoutDst, typename ElementBias,
+          typename LayoutBias, typename ScalarType, typename ComputeType,
+          typename InnerProductOp = cutlass::arch::OpMultiplyAdd>
+struct Deconv2d;
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
+template <typename ElementSrc, typename LayoutSrc, typename ElementFilter,
+          typename LayoutFilter, typename ElementDst, typename LayoutDst,
+          typename ElementBias, typename LayoutBias, typename ScalarType,
+          typename ComputeType, typename InnerProductOp>
+struct Deconv2d<conv::ConvType::kDepthwiseConvolution, ElementSrc, LayoutSrc,
+                ElementFilter, LayoutFilter, ElementDst, LayoutDst, ElementBias,
+                LayoutBias, ScalarType, ComputeType, InnerProductOp> {
+    using ConvertOp = typename platform::conditional<
+            detail::need_clamp<ElementDst>::value,
+            NumericConverterClamp<ElementDst, ScalarType>,
+            NumericConverter<ElementDst, ScalarType>>::type;
+    void operator()(conv::Conv2dProblemSize conv_param, ScalarType alpha,
+                    TensorRef<ElementSrc, LayoutSrc> tensor_src,
+                    TensorRef<ElementFilter, LayoutFilter> tensor_filter,
+                    ScalarType beta,
+                    TensorRef<ElementBias, LayoutBias> tensor_bias,
+                    TensorRef<ElementDst, LayoutDst> tensor_dst,
+                    ComputeType initial_accum = ComputeType(0)) {
+        static_assert(LayoutSrc::kRank == 4 && LayoutFilter::kRank == 4 &&
+                              LayoutDst::kRank == 4 && LayoutBias::kRank == 4,
+                      "Tensors must be of rank 4");
+        Depsep_Dgrad<ElementSrc, LayoutSrc, ElementFilter, LayoutFilter,
+                     ElementBias, LayoutBias, ElementDst, LayoutDst, ScalarType,
+                     ComputeType, ConvertOp, multiply_add<ComputeType>>(
+                conv_param, tensor_src, tensor_filter, tensor_bias, tensor_dst,
+                tensor_dst, alpha, beta, 0);
+    }
+
+    void operator()(conv::Conv2dProblemSize conv_param, ScalarType alpha,
+                    TensorRef<ElementSrc, LayoutSrc> tensor_src,
+                    TensorRef<ElementFilter, LayoutFilter> tensor_filter,
+                    ScalarType beta,
+                    TensorRef<ElementBias, LayoutBias> tensor_bias,
+                    ScalarType gamma, TensorRef<ElementDst, LayoutDst> tensor_z,
+                    TensorRef<ElementDst, LayoutDst> tensor_dst,
+                    ComputeType initial_accum = ComputeType(0)) {
+        static_assert(LayoutSrc::kRank == 4 && LayoutFilter::kRank == 4 &&
+                              LayoutDst::kRank == 4 && LayoutBias::kRank == 4,
+                      "Tensors must be of rank 4");
+
+        Depsep_Dgrad<ElementSrc, LayoutSrc, ElementFilter, LayoutFilter,
+                     ElementBias, LayoutBias, ElementDst, LayoutDst, ScalarType,
+                     ComputeType, ConvertOp, multiply_add<ComputeType>>(
+                conv_param, tensor_src, tensor_filter, tensor_bias, tensor_z,
+                tensor_dst, alpha, beta, gamma);
+    }
+};
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
 
 }  // namespace host
 }  // namespace reference
