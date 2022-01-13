@@ -173,10 +173,29 @@ private:
 
     Index filter_w_;
 
+    Index conv_k_iterations_;
+
     /// Used for out-of-order visitation
     bool is_residue_tile_;
 
 private:
+    CUTLASS_DEVICE
+    void initialize_extent_and_threadblock_offset_(
+            LogicalCoord& extent, LogicalCoord& threadblock_offset) {
+        auto ranges = make_Coord(
+                threadblock_offset.column(),
+                threadblock_offset.column() + Shape::kContiguous - 1);
+        ranges = params_.tile_map_(ranges, params_.fh_);
+        auto row_extent =
+                ranges.at(1) < extent.row() ? ranges.at(1) : extent.row();
+        extent = LogicalCoord{row_extent, extent.column()};
+        threadblock_offset =
+                LogicalCoord{ranges.at(0), threadblock_offset.column()};
+        conv_k_iterations_ = (extent.row() - threadblock_offset.row() +
+                              Shape::kStrided - 1) /
+                             Shape::kStrided;
+    }
+
     CUTLASS_DEVICE
     void initialize_filter_coordinates_(LogicalCoord const& thread_offset) {
         auto grad = params_.tile_map_(thread_offset.row());
@@ -192,21 +211,27 @@ private:
     }
 
 public:
-    /// Constructs a TileIterator from its precomputed state, threadblock
-    /// offset, and thread ID
+    /// Constructs a TileIterator
     CUTLASS_HOST_DEVICE
     Dwconv2dTileFilterIteratorDgradPrecomp(
             /// Precomputed parameters object
             Params const& params,
             /// Pointer to start of tensor
-            Pointer pointer,
-            /// Extent of tensor
-            LogicalCoord extent,
+            Pointer pointer)
+            : params_(params), pointer_(pointer), is_residue_tile_(true) {}
+
+    /// Initialize a TileIterator from its precomputed state, threadblock offset
+    /// and thread ID
+    CUTLASS_HOST_DEVICE
+    Dwconv2dTileFilterIteratorDgradPrecomp& initialize(
             /// ID of each participating thread
             int thread_id,
+            /// Extent of tensor
+            LogicalCoord& extent,
             /// Initial offset of threadblock
-            LogicalCoord const& threadblock_offset)
-            : params_(params), pointer_(pointer), is_residue_tile_(true) {
+            LogicalCoord& threadblock_offset) {
+        initialize_extent_and_threadblock_offset_(extent, threadblock_offset);
+
         residue_offset_ =
                 (extent.row() - threadblock_offset.row()) % Shape::kStrided;
         if (!residue_offset_) {
@@ -225,19 +250,9 @@ public:
         initialize_filter_coordinates_(thread_offset);
 
         residue_extent_ = residue_extent_ - thread_offset.row();
+    
+        return *this;
     }
-
-    /// Construct a Dwconv2dTileFilterIteratorDgradPrecomp with zero threadblock
-    /// offset
-    CUTLASS_HOST_DEVICE
-    Dwconv2dTileFilterIteratorDgradPrecomp(
-            Params const& params,  ///< Precomputed parameters object
-            Pointer pointer,       ///< Pointer to start of tensor
-            LogicalCoord extent,   ///< Extent of tensor
-            int thread_id          ///< ID of each participating thread
-            )
-            : Dwconv2dTileFilterIteratorDgradPrecomp(
-                      params, pointer, extent, thread_id, make_Coord(0, 0)) {}
 
     /// Adds a pointer offset in units of Element
     CUTLASS_HOST_DEVICE
@@ -385,6 +400,9 @@ public:
 
         return Status::kSuccess;
     }
+
+    CUTLASS_DEVICE
+    const Index& conv_k_iterations() { return conv_k_iterations_; }
 };
 
 ////////////////////////////////////////////////////////////////////////////////

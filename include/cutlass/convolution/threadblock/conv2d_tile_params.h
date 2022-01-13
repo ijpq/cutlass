@@ -224,6 +224,16 @@ struct TileMap<layout::TensorNCHW, TileMapType::kRow2IHW_Col2OHW> {
         w = src.column() - w * sw_ + pw_;
         return MatrixCoord{h, w};
     }
+    CUTLASS_HOST_DEVICE
+    Coord<2> operator()(Coord<2> const& ranges, int const& offset) const {
+        int lo, hi, mod;
+        fast_divmod(lo, mod, ranges.at(0), wo_, wo_mul_, wo_shr_);
+        fast_divmod(hi, mod, ranges.at(1), wo_, wo_mul_, wo_shr_);
+        lo = lo * sh_ - ph_;
+        hi = hi * sh_ - ph_ + offset;
+        lo = lo >= 0 ? lo : 0;
+        return make_Coord(lo * wi_, hi * wi_);
+    }
 };
 
 template <>
@@ -281,6 +291,16 @@ struct TileMap<layout::TensorNCHW, TileMapType::kRow2OHW_Col2IHW> {
         h = h - grad.row() * sh_ + ph_;
         w = w - grad.column() * sw_ + pw_;
         return MatrixCoord{h, w};
+    }
+    CUTLASS_HOST_DEVICE
+    Coord<2> operator()(Coord<2> const& ranges, int const& offset) const {
+        int lo, hi, mod;
+        fast_divmod(lo, mod, ranges.at(0), wi_, wi_mul_, wi_shr_);
+        fast_divmod(hi, mod, ranges.at(1), wi_, wi_mul_, wi_shr_);
+        lo = (lo + ph_ - offset + 1) / sh_;
+        hi = (hi + ph_) / sh_ + 1;
+        lo = lo >= 0 ? lo : 0;
+        return make_Coord(lo * wo_, hi * wo_);
     }
 };
 

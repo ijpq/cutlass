@@ -26,7 +26,7 @@
  **************************************************************************************************/
 /**
  * \file
- * include/cutlass/convolution/kernel/implicit_gemm_nt_precomp_convolution.h
+ * include/cutlass/convolution/kernel/implicit_batched_gemm_nt_dwconv2d.h
  *
  * Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
  *
@@ -67,7 +67,7 @@ template <typename Mma_,  ///! Threadblock-scoped matrix multiply-accumulate
           typename Epilogue_,            ///! Epilogue
           typename ThreadblockSwizzle_,  ///! Threadblock swizzling function
           conv::Operator ConvOperator,   ///! Convolutional operator (Fprop,
-                                         /// Dgrad, Wgrad)
+                                         /// Dgrad)
           typename ConvProblemSize_ =
                   Conv2dProblemSize  ///! Convolutional operator on 2D or 3D
                                      /// problem
@@ -187,14 +187,13 @@ struct ImplicitBatchedGemmTnDepthwiseConvolution {
 
         cutlass::gemm::GemmCoord gemm_problem_size;
         int* workspace;
-        int conv_k_iterations;
 
         //
         // Methods
         //
 
         CUTLASS_HOST_DEVICE
-        Params() : conv_k_iterations(0) {}
+        Params() {}
 
         CUTLASS_HOST_DEVICE
         Params(Arguments const& args,
@@ -228,8 +227,6 @@ struct ImplicitBatchedGemmTnDepthwiseConvolution {
                         problem_size.N, problem_size.P * problem_size.Q,
                         problem_size.H * problem_size.W);
             }
-            conv_k_iterations = (gemm_problem_size.k() + Mma::Shape::kK - 1) /
-                                Mma::Shape::kK;
         }
     };
 
@@ -302,16 +299,24 @@ struct ImplicitBatchedGemmTnDepthwiseConvolution {
         // Compute position within threadblock
         int thread_idx = threadIdx.x;
 
-        // Construct iterators to Src and Filter Tensor operands
+        // Construct iterator to Filter Tensor operand
+        typename Mma::IteratorFilter iterator_filter(params.params_filter,
+                                                     params.ref_filter.data());
+
+        cutlass::MatrixCoord extent_filter{params.gemm_problem_size.k(),
+                                           params.gemm_problem_size.n()};
+
+        // Update extent and threadblock_offset
+        iterator_filter.initialize(thread_idx, extent_filter, tb_offset_filter);
+
+        // Compute threadblock_offset of Src Tensor
+        tb_offset_src = {threadblock_tile_offset.m(), tb_offset_filter.row()};
+
+        // Construct iterator to Src Tensor operand
         typename Mma::IteratorSrc iterator_src(
                 params.params_src, params.ref_src.data(),
-                {params.gemm_problem_size.m(), params.gemm_problem_size.k()},
-                thread_idx, tb_offset_src);
-
-        typename Mma::IteratorFilter iterator_filter(
-                params.params_filter, params.ref_filter.data(),
-                {params.gemm_problem_size.k(), params.gemm_problem_size.n()},
-                thread_idx, tb_offset_filter);
+                {params.gemm_problem_size.m(), extent_filter.row()}, thread_idx,
+                tb_offset_src);
 
         iterator_src.add_coord_offset({0, 0, 0, threadblock_tile_offset.k()});
         iterator_filter.add_coord_offset(
@@ -332,7 +337,7 @@ struct ImplicitBatchedGemmTnDepthwiseConvolution {
         typename Mma::FragmentDst accumulators;
         accumulators.clear();
 
-        mma(params.conv_k_iterations, accumulators, iterator_src,
+        mma(iterator_filter.conv_k_iterations(), accumulators, iterator_src,
             iterator_filter, accumulators, params.transform_src,
             params.transform_filter);
 

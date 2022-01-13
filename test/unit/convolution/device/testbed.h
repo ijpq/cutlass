@@ -1301,6 +1301,9 @@ bool TestDepthwiseConvolution() {
     std::vector<ConvolutionParameter> args;
     cutlass::conv::Mode mode = cutlass::conv::Mode::kCrossCorrelation;
 
+    args.emplace_back(ConvolutionParameter{128, 16, 16, 1, 1, 7, 7, 10, 10, 0,
+                                           0, 1, 1, 1, 1, mode});
+
     for (int n : {160, 48, 33}) {
         for (int g : {3, 7}) {
             for (int ih : {16}) {
