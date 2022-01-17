@@ -54,4 +54,6 @@ cutlass_test_unit_add_executable(
   depthwise_conv2d_fprop_f32nchw_f32nchw_f32nchw_simt_f32_sm50_perf.cu
   depthwise_conv2d_dgrad_f32nchw_f32nchw_f32nchw_simt_f32_sm50.cu
   depthwise_conv2d_dgrad_f32nchw_f32nchw_f32nchw_simt_f32_sm50_perf.cu
+  depthwise_conv2d_wgrad_f32nchw_f32nchw_f32nchw_simt_f32_sm50.cu
+  depthwise_conv2d_wgrad_f32nchw_f32nchw_f32nchw_simt_f32_sm50_perf.cu
 )

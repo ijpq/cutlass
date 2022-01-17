@@ -48,14 +48,14 @@
 // computation between elements
 using ElementAccumulator = float;  // Data type of accumulator
 using ElementComputeEpilogue =
-        float;                // Data type of epilogue computation (alpha, beta)
-using ElementSrc = float;     // Data type of elements in src tensor
-using ElementFilter = float;  // Data type of elements in filter tensor
-using ElementDst = float;     // Data type of elements in output tensor
+        float;              // Data type of epilogue computation (alpha, beta)
+using ElementSrc = float;   // Data type of elements in src tensor
+using ElementDiff = float;  // Data type of elements in filter tensor
+using ElementGrad = float;  // Data type of elements in output tensor
 
 using LayoutSrc = cutlass::layout::TensorNCHW;
-using LayoutFilter = cutlass::layout::TensorNCHW;
-using LayoutDst = cutlass::layout::TensorNCHW;
+using LayoutDiff = cutlass::layout::TensorNCHW;
+using LayoutGrad = cutlass::layout::TensorNCHW;
 
 // This code section describes whether you want to use tensor cores or regular
 // SIMT cores on GPU SM
@@ -66,7 +66,7 @@ using SmArch = cutlass::arch::Sm50;
 
 // This code section describes the tile size a thread block will compute
 using ThreadblockShape =
-        cutlass::gemm::GemmShape<64, 128, 8>;  // Threadblock tile shape
+        cutlass::gemm::GemmShape<128, 128, 8>;  // Threadblock tile shape
 
 // This code section describes tile size a warp will compute
 using WarpShape = cutlass::gemm::GemmShape<64, 32, 8>;  // Warp tile shape
@@ -77,28 +77,26 @@ using InstructionShape =
 
 // This code section describes how threadblocks are scheduled on GPU
 using SwizzleThreadBlock =
-        cutlass::conv::threadblock::DepthwiseConvolutionFpropThreadblockSwizzle;
+        cutlass::conv::threadblock::DepthwiseConvolutionWgradThreadblockSwizzle;
 
 // Number of pipelines you want to use
 constexpr int NumStages = 2;
 
 // This code section describes the epilogue part of the kernel, we use default
 // value
-using EpilogueOp = cutlass::epilogue::thread::BiasAddLinearCombination<
-        ElementDst,               // Data type of output matrix.
+using EpilogueOp = cutlass::epilogue::thread::LinearCombination<
+        ElementGrad,              // Data type of output matrix.
         1, ElementAccumulator,    // Data type of accumulator
-        ElementDst,               // Data type of bias
         ElementComputeEpilogue>;  // Data type for alpha/beta in linear
                                   // combination
 
-using Convolution = cutlass::conv::device::Convolution<
-        ElementSrc, LayoutSrc, ElementFilter, LayoutFilter, ElementDst,
-        LayoutDst, ElementDst, LayoutDst, ElementDst,
-        cutlass::conv::ConvType::kDepthwiseConvolution, MMAOp, SmArch,
-        ThreadblockShape, WarpShape, InstructionShape, EpilogueOp,
-        SwizzleThreadBlock, NumStages, 1, 1,
+using Convolution = cutlass::conv::device::ConvolutionBackwardFilter<
+        ElementSrc, LayoutSrc, ElementDiff, LayoutDiff, ElementGrad, LayoutGrad,
+        ElementGrad, cutlass::conv::ConvType::kDepthwiseConvolution, MMAOp,
+        SmArch, ThreadblockShape, WarpShape, InstructionShape, EpilogueOp,
+        SwizzleThreadBlock, NumStages, 4, 4,
         cutlass::conv::SpecialOptimizeDesc::NONE, cutlass::arch::OpMultiplyAdd,
-        cutlass::conv::ImplicitGemmMode::GEMM_TN>;
+        cutlass::conv::ImplicitGemmMode::GEMM_NT>;
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -213,11 +211,12 @@ struct Options {
 
     /// Prints the usage statement.
     std::ostream& print_usage(std::ostream& out) const {
-        out << "16_large_depthwise_conv2dfprop example\n\n"
-            << "  This example uses Large Kernel Depthwise Convolution on FP32 "
+        out << "18_large_depthwise_conv2dwgrad example\n\n"
+            << "  This example uses Large Kernel Depthwise Conv2d Wgrad on "
+               "FP32 "
                "data"
                "types to compute\n"
-            << "  forward convolution on tensors of layout NCHW.\n\n"
+            << "  backward convolution filter on tensors of layout NCHW.\n\n"
             << "Options:\n\n"
             << "  --help               If specified, displays this usage "
                "statement.\n\n"
@@ -245,12 +244,12 @@ struct Options {
 
         out << "\n\nExamples:\n\n"
             << "$ "
-               "./examples/16_large_depthwise_conv2dfprop/"
-               "16_large_depthwise_conv2dfprop  --n=64 --h=32 --w=32 --g=384 "
+               "./examples/18_large_depthwise_conv2dwgrad/"
+               "18_large_depthwise_conv2dwgrad  --n=64 --h=32 --w=32 --g=384 "
                "--r=1 --s=1\n\n"
             << "$ "
-               "./examples/16_large_depthwise_conv2dfprop/"
-               "16_large_depthwise_conv2dfprop  --n=64 --h=32 --w=32 --g=384 "
+               "./examples/18_large_depthwise_conv2dwgrad/"
+               "18_large_depthwise_conv2dwgrad  --n=64 --h=32 --w=32 --g=384 "
                "--r=31 --s=31 --ref-check\n\n";
 
         return out;
@@ -335,20 +334,14 @@ Result profile_convolution(Options const& options) {
     //
 
     cutlass::HostTensor<ElementSrc, LayoutSrc> tensor_src(options.input_size);
-    cutlass::HostTensor<ElementFilter, LayoutFilter> tensor_filter(
-            options.filter_size);
-    cutlass::HostTensor<typename Convolution::ElementDst,
-                        typename Convolution::LayoutDst>
-            tensor_bias;
-    cutlass::HostTensor<typename Convolution::ElementDst,
-                        typename Convolution::LayoutDst>
-            tensor_z(options.output_size());
-    cutlass::HostTensor<typename Convolution::ElementDst,
-                        typename Convolution::LayoutDst>
-            tensor_dst(options.output_size());
-    cutlass::HostTensor<typename Convolution::ElementDst,
-                        typename Convolution::LayoutDst>
-            tensor_ref_dst(options.output_size());
+    cutlass::HostTensor<ElementDiff, LayoutDiff> tensor_diff(
+            options.output_size());
+    cutlass::HostTensor<typename Convolution::ElementGrad,
+                        typename Convolution::LayoutGrad>
+            tensor_grad(options.filter_size);
+    cutlass::HostTensor<typename Convolution::ElementGrad,
+                        typename Convolution::LayoutGrad>
+            tensor_ref_grad(options.filter_size);
 
     //
     // Initialize tensors
@@ -359,21 +352,20 @@ Result profile_convolution(Options const& options) {
             tensor_src.host_view(), 1, ElementSrc(7), ElementSrc(-8), 0);
 
     // Fill tensor filter on host with uniform-distribution random data
-    cutlass::reference::host::TensorFillRandomUniform(tensor_filter.host_view(),
-                                                      1, ElementFilter(7),
-                                                      ElementFilter(-8), 0);
+    cutlass::reference::host::TensorFillRandomUniform(
+            tensor_diff.host_view(), 1, ElementDiff(7), ElementDiff(-8), 0);
 
     // Fill tensor dst on host with zeros
-    cutlass::reference::host::TensorFill(tensor_dst.host_view());
+    cutlass::reference::host::TensorFill(tensor_grad.host_view());
 
     // Fill tensor C for reference on host with zeros
-    cutlass::reference::host::TensorFill(tensor_ref_dst.host_view());
+    cutlass::reference::host::TensorFill(tensor_ref_grad.host_view());
 
     // Copy data from host to GPU
     tensor_src.sync_device();
-    tensor_filter.sync_device();
-    tensor_dst.sync_device();
-    tensor_ref_dst.sync_device();
+    tensor_diff.sync_device();
+    tensor_grad.sync_device();
+    tensor_ref_grad.sync_device();
 
     //
     // Define arguments for CUTLASS Convolution
@@ -389,11 +381,9 @@ Result profile_convolution(Options const& options) {
              options.conv_stride, options.dilation, options.output_size(), mode,
              split_k_slices, options.filter_size.n()},
             tensor_src.device_ref(),
-            tensor_filter.device_ref(),
-            tensor_bias.device_ref(),
-            tensor_z.device_ref(),
-            tensor_dst.device_ref(),
-            {options.alpha, 0, options.beta}};
+            tensor_diff.device_ref(),
+            tensor_grad.device_ref(),
+            {options.alpha}};
 
     //
     // Initialize CUTLASS Convolution
@@ -429,30 +419,27 @@ Result profile_convolution(Options const& options) {
                 options.filter_size.n());
 
         // Compute with reference implementation
-        cutlass::reference::host::Convolution<
+        cutlass::reference::host::Convolution2dBackwardFilter<
                 Convolution::kConvolutionType, typename Convolution::ElementSrc,
                 typename Convolution::LayoutSrc,
-                typename Convolution::ElementFilter,
-                typename Convolution::LayoutFilter,
-                typename Convolution::ElementDst,
-                typename Convolution::LayoutDst,
-                typename Convolution::ElementDst,
-                typename Convolution::LayoutDst, ElementComputeEpilogue,
+                typename Convolution::ElementDiff,
+                typename Convolution::LayoutDiff,
+                typename Convolution::ElementGrad,
+                typename Convolution::LayoutGrad, ElementComputeEpilogue,
                 ElementAccumulator, typename Convolution::Operator>
                 reference_convolution;
 
         reference_convolution(problem_size, options.alpha,
-                              tensor_src.host_ref(), tensor_filter.host_ref(),
-                              0, tensor_bias.host_ref(), options.beta,
-                              tensor_z.host_ref(), tensor_ref_dst.host_ref(),
+                              tensor_src.host_ref(), tensor_diff.host_ref(),
+                              tensor_ref_grad.host_ref(),
                               ElementAccumulator(0));
 
         // Check if output from CUTLASS kernel and reference kernel are equal or
         // not
-        tensor_ref_dst.sync_host();
+        tensor_ref_grad.sync_host();
 
         bool passed = cutlass::reference::host::TensorEquals(
-                tensor_dst.host_view(), tensor_ref_dst.host_view());
+                tensor_grad.host_view(), tensor_ref_grad.host_view());
 
         if (!passed) {
             result.reference_check = cutlass::Status::kErrorInternal;
@@ -468,7 +455,7 @@ Result profile_convolution(Options const& options) {
     if (options.save_workspace) {
         std::stringstream ss;
 
-        ss << "16_workspace_large_depthwise_conv2dfprop_"
+        ss << "18_workspace_large_depthwise_conv2dwgrad_"
            << options.input_size.n() << "x" << options.input_size.h() << "x"
            << options.input_size.w() << "x" << options.input_size.c() << "_"
            << options.filter_size.n() << "x" << options.filter_size.h() << "x"
@@ -479,16 +466,16 @@ Result profile_convolution(Options const& options) {
 
         output_workspace << "Input = \n"
                          << tensor_src.host_view() << "\n\n"
-                         << "Filters = \n"
-                         << tensor_filter.host_view() << "\n\n";
+                         << "Diff = \n"
+                         << tensor_diff.host_view() << "\n\n";
 
         if (options.reference_check) {
             output_workspace << "Reference = \n"
-                             << tensor_ref_dst.host_view() << "\n\n";
+                             << tensor_ref_grad.host_view() << "\n\n";
         }
 
         output_workspace << "Computed = \n"
-                         << tensor_dst.host_view() << std::endl;
+                         << tensor_grad.host_view() << std::endl;
 
         std::cout << "Results written to '" << ss.str() << "'." << std::endl;
     }
@@ -570,10 +557,11 @@ int main(int argc, char const** args) {
     CUDA_CHECK(cudaGetDeviceProperties(&props, 0));
 
     if (!(props.major > 5 || (props.major == 5 && props.minor >= 0))) {
-        std::cerr << "This example (16_large_depthwise_conv2dfprop) must be run "
-                     "on a machine with compute "
-                     "capability at least 50."
-                  << std::endl;
+        std::cerr
+                << "This example (18_large_depthwise_conv2dwgrad) must be run "
+                   "on a machine with compute "
+                   "capability at least 50."
+                << std::endl;
         notSupported = true;
     }
 

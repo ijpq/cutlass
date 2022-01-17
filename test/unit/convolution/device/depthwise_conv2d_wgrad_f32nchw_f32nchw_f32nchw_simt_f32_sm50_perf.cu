@@ -52,36 +52,35 @@
 #include "cutlass/util/reference/host/tensor_fill.h"
 #include "cutlass/util/tensor_view_io.h"
 
-#include "conv2d_dgrad_testbed.h"
+#include "conv2d_wgrad_testbed.h"
 
 ////////////////////////////////////////////////////////////////////////////////
 
-TEST(SM50_Device_Depthwise_Conv2d_Dgrad_f32_f32_nchw_simt_op_perf,
-     64x128x8_64x32x8) {
+TEST(SM50_Device_Depthwise_Conv2d_Wgrad_f32_f32_nchw_simt_op_perf,
+     128x128x8_32x64x8) {
     using ElementOutput = float;
     using ElementAccumulator = float;
     using ElementCompute = float;
 
-    using Convolution = cutlass::conv::device::Deconvolution<
+    using Convolution = cutlass::conv::device::ConvolutionBackwardFilter<
             float, cutlass::layout::TensorNCHW, float,
             cutlass::layout::TensorNCHW, ElementOutput,
-            cutlass::layout::TensorNCHW, float, cutlass::layout::TensorNCHW,
-            float, cutlass::conv::ConvType::kDepthwiseConvolution,
+            cutlass::layout::TensorNCHW, float,
+            cutlass::conv::ConvType::kDepthwiseConvolution,
             cutlass::arch::OpClassSimt, cutlass::arch::Sm50,
-            cutlass::gemm::GemmShape<64, 128, 8>,
-            cutlass::gemm::GemmShape<64, 32, 8>,
+            cutlass::gemm::GemmShape<128, 128, 8>,
+            cutlass::gemm::GemmShape<32, 64, 8>,
             cutlass::gemm::GemmShape<1, 1, 1>,
-            cutlass::epilogue::thread::BiasAddLinearCombination<
-                    ElementOutput, 1, ElementAccumulator, float,
-                    ElementCompute>,
+            cutlass::epilogue::thread::LinearCombination<
+                    ElementOutput, 1, ElementAccumulator, ElementCompute>,
             cutlass::conv::threadblock::
-                    DepthwiseConvolutionDgradThreadblockSwizzle,
-            2, 4, 1, cutlass::conv::SpecialOptimizeDesc::NONE,
+                    DepthwiseConvolutionWgradThreadblockSwizzle,
+            2, 4, 4, cutlass::conv::SpecialOptimizeDesc::NONE,
             cutlass::arch::OpMultiplyAdd,
-            cutlass::conv::ImplicitGemmMode::GEMM_TN>;
+            cutlass::conv::ImplicitGemmMode::GEMM_NT>;
 
     EXPECT_TRUE(
-            test::convolution::device::BenchDepthwiseConv2dDgrad<Convolution>(
+            test::convolution::device::BenchDepthwiseConv2dWgrad<Convolution>(
                     64, 1000));
 }
 

@@ -220,8 +220,8 @@ public:
             Pointer pointer)
             : params_(params), pointer_(pointer), is_residue_tile_(true) {}
 
-    /// Initialize a TileIterator from its precomputed state, threadblock offset
-    /// and thread ID
+    /// Intialize a TileIterator from its precomputed state, threadblock
+    /// offset, and thread ID
     CUTLASS_HOST_DEVICE
     Dwconv2dTileFilterIteratorDgradPrecomp& initialize(
             /// ID of each participating thread
@@ -253,7 +253,7 @@ public:
     
         return *this;
     }
-
+    
     /// Adds a pointer offset in units of Element
     CUTLASS_HOST_DEVICE
     void add_pointer_offset(LongIndex pointer_offset) {

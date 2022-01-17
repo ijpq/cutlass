@@ -397,6 +397,80 @@ void Depsep_Dgrad(
     }
 }
 
+/// Depthwise-separable convolution
+template <typename ElementSrc, typename LayoutSrc, typename ElementDiff,
+          typename LayoutDiff, typename ElementGrad, typename LayoutGrad,
+          typename ElementAccumulator, typename ElementCompute,
+          typename ConvertOp = NumericConverter<ElementGrad, ElementCompute>,
+          typename InnerProductOp = multiply_add<ElementAccumulator>>
+void Depsep_Wgrad(
+        conv::Conv2dProblemSize conv_param,
+        cutlass::TensorRef<ElementSrc, LayoutSrc> tensor_src,
+        cutlass::TensorRef<ElementDiff, LayoutDiff> tensor_diff,
+        cutlass::TensorRef<ElementGrad, LayoutGrad> tensor_grad,
+        ElementCompute alpha,
+        cutlass::conv::Mode mode = cutlass::conv::Mode::kCrossCorrelation) {
+    ConvertOp convert_op;
+    InnerProductOp inner_product_op;
+
+    int const N = conv_param.N;
+    int const G = conv_param.K;
+    int const H = conv_param.H;
+    int const W = conv_param.W;
+    int const P = conv_param.P;
+    int const Q = conv_param.Q;
+    int const R = conv_param.R;
+    int const S = conv_param.S;
+    int const PH = conv_param.pad_h;
+    int const PW = conv_param.pad_w;
+    int const SH = conv_param.stride_h;
+    int const SW = conv_param.stride_w;
+    int const DH = conv_param.dilation_h;
+    int const DW = conv_param.dilation_w;
+
+    // Apply MMA and accumulate ElementAccumulator
+    for (int g = 0; g < G; ++g) {
+        for (int r = 0; r < R; ++r) {
+            for (int s = 0; s < S; ++s) {
+                ElementAccumulator acc = ElementAccumulator();
+                for (int n = 0; n < N; ++n) {
+                    for (int p = 0; p < P; ++p) {
+                        for (int q = 0; q < Q; ++q) {
+                            int filter_r = r;
+                            int filter_s = s;
+                            if (conv_param.mode ==
+                                cutlass::conv::Mode::kConvolution) {
+                                filter_r = R - 1 - r;
+                                filter_s = S - 1 - s;
+                            }
+
+                            int h = p * SH - PH + filter_r * DH;
+                            int w = q * SW - PW + filter_s * DW;
+
+                            if (h >= 0 && h < H && w >= 0 && w < W) {
+                                ElementSrc sv = tensor_src.at({n, h, w, g});
+
+                                ElementDiff dv = tensor_diff.at({n, p, q, g});
+                                acc = inner_product_op(ElementAccumulator(sv),
+                                                       ElementAccumulator(dv),
+                                                       acc);
+                            }
+                        }
+                    }
+                }
+
+                // Apply Epilogue, compute ElementCompute, convert and
+                // store ElementC
+                ElementCompute intermediate = alpha * ElementCompute(acc);
+                if (detail::need_round<ElementGrad, ElementCompute>::value) {
+                    intermediate = std::round(intermediate);
+                }
+                tensor_grad.at({g, r, s, 0}) = convert_op(intermediate);
+            }
+        }
+    }
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 /// Dgrad
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -466,8 +540,8 @@ void Conv2dDgrad(cutlass::conv::Conv2dProblemSize problem_size,
                         }      // for (S)
                     }          // for (R)
 
-                    // Apply Epilogue, compute ElementCompute, convert and
-                    // store ElementC
+                    // Apply Epilogue, compute ElementCompute, convert
+                    // and store ElementC
                     ElementC c_ref = ElementC();
 
                     if (beta != ElementCompute()) {
@@ -552,8 +626,8 @@ void Conv2dWgrad(cutlass::conv::Conv2dProblemSize problem_size,
                         }
                     }
 
-                    // Apply Epilogue, compute ElementCompute, convert and
-                    // store ElementC
+                    // Apply Epilogue, compute ElementCompute, convert
+                    // and store ElementC
                     ElementC c_ref = ElementC();
 
                     if (beta != ElementCompute()) {
@@ -684,8 +758,8 @@ void Conv3dFprop(conv::Conv3dProblemSize problem_size,
                             }
                         }
 
-                        // Apply Epilogue, compute ElementCompute, convert
-                        // and store ElementC
+                        // Apply Epilogue, compute ElementCompute,
+                        // convert and store ElementC
                         ElementC c_ref = ElementC();
 
                         if (beta != ElementCompute()) {
@@ -787,8 +861,8 @@ void Conv3dDgrad(cutlass::conv::Conv3dProblemSize problem_size,
                             }          // for (R)
                         }              // for (T)
 
-                        // Apply Epilogue, compute ElementCompute, convert
-                        // and store ElementC
+                        // Apply Epilogue, compute ElementCompute,
+                        // convert and store ElementC
                         ElementC c_ref = ElementC();
 
                         if (beta != ElementCompute()) {
@@ -891,8 +965,8 @@ void Conv3dWgrad(cutlass::conv::Conv3dProblemSize problem_size,
                             }
                         }
 
-                        // Apply Epilogue, compute ElementCompute, convert
-                        // and store ElementC
+                        // Apply Epilogue, compute ElementCompute,
+                        // convert and store ElementC
                         ElementC c_ref = ElementC();
 
                         if (beta != ElementCompute()) {
@@ -1707,6 +1781,43 @@ struct Deconv2d<conv::ConvType::kDepthwiseConvolution, ElementSrc, LayoutSrc,
                      ComputeType, ConvertOp, multiply_add<ComputeType>>(
                 conv_param, tensor_src, tensor_filter, tensor_bias, tensor_z,
                 tensor_dst, alpha, beta, gamma);
+    }
+};
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
+template <conv::ConvType ConvolutionType, typename ElementSrc,
+          typename LayoutSrc, typename ElementDiff, typename LayoutDiff,
+          typename ElementGrad, typename LayoutGrad, typename ScalarType,
+          typename ComputeType,
+          typename InnerProductOp = cutlass::arch::OpMultiplyAdd>
+struct Convolution2dBackwardFilter;
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
+template <typename ElementSrc, typename LayoutSrc, typename ElementDiff,
+          typename LayoutDiff, typename ElementGrad, typename LayoutGrad,
+          typename ScalarType, typename ComputeType, typename InnerProductOp>
+struct Convolution2dBackwardFilter<conv::ConvType::kDepthwiseConvolution,
+                                   ElementSrc, LayoutSrc, ElementDiff,
+                                   LayoutDiff, ElementGrad, LayoutGrad,
+                                   ScalarType, ComputeType, InnerProductOp> {
+    using ConvertOp = typename platform::conditional<
+            detail::need_clamp<ElementGrad>::value,
+            NumericConverterClamp<ElementGrad, ScalarType>,
+            NumericConverter<ElementGrad, ScalarType>>::type;
+    void operator()(conv::Conv2dProblemSize conv_param, ScalarType alpha,
+                    TensorRef<ElementSrc, LayoutSrc> tensor_src,
+                    TensorRef<ElementDiff, LayoutDiff> tensor_diff,
+                    TensorRef<ElementGrad, LayoutGrad> tensor_grad,
+                    ComputeType initial_accum = ComputeType(0)) {
+        static_assert(LayoutSrc::kRank == 4 && LayoutDiff::kRank == 4 &&
+                              LayoutGrad::kRank == 4,
+                      "Tensors must be of rank 4");
+        Depsep_Wgrad<ElementSrc, LayoutSrc, ElementDiff, LayoutDiff,
+                     ElementGrad, LayoutGrad, ScalarType, ComputeType,
+                     ConvertOp, multiply_add<ComputeType>>(
+                conv_param, tensor_src, tensor_diff, tensor_grad, alpha);
     }
 };
 

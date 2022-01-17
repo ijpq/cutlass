@@ -59,7 +59,7 @@ namespace threadblock {
 ////////////////////////////////////////////////////////////////////////////////
 
 template <typename Shape, typename Element, typename Layout, typename ThreadMap,
-          int AccessSize>
+          int AccessSize, int AdvanceRank = 0>
 class Dwconv2dTileIterator;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -71,9 +71,9 @@ class Dwconv2dTileIterator;
 ///            MaskedTileIteratorConcept
 ///
 template <typename Shape_, typename Element_, typename ThreadMap_,
-          int AccessSize>
+          int AccessSize, int AdvanceRank>
 class Dwconv2dTileIterator<Shape_, Element_, layout::TensorNCHW, ThreadMap_,
-                           AccessSize> {
+                           AccessSize, AdvanceRank> {
 public:
     using Shape = layout::PitchLinearShape<Shape_::kColumn, Shape_::kRow>;
     using Element = Element_;
@@ -96,7 +96,8 @@ public:
     using Pointer = Element*;
 
     using UnderlyingIterator = transform::threadblock::PredicatedTileIterator<
-            Shape, Element, layout::PitchLinear, 0, ThreadMap, AccessSize>;
+            Shape, Element, layout::PitchLinear, AdvanceRank, ThreadMap,
+            AccessSize>;
 
     /// Type used for internal memory accesses
     using AccessType = typename UnderlyingIterator::AccessType;

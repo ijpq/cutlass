@@ -26,7 +26,7 @@
  **************************************************************************************************/
 /**
  * \file
- * include/cutlass/convolution/kernel/implicit_batched_gemm_tn_dwconv2d.h
+ * include/cutlass/convolution/kernel/implicit_batched_gemm_dwconv2d_wgrad.h
  *
  * Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
  *
@@ -66,29 +66,23 @@ namespace kernel {
 template <typename Mma_,  ///! Threadblock-scoped matrix multiply-accumulate
           typename Epilogue_,            ///! Epilogue
           typename ThreadblockSwizzle_,  ///! Threadblock swizzling function
-          conv::Operator ConvOperator,   ///! Convolutional operator (Fprop,
-                                         /// Dgrad)
           typename ConvProblemSize_ =
                   Conv2dProblemSize  ///! Convolutional operator on 2D or 3D
                                      /// problem
           >
-struct ImplicitBatchedGemmTnDepthwiseConvolution {
+struct ImplicitBatchedGemmDepthwiseConvolution2dWgrad {
     using Mma = Mma_;
     using Epilogue = Epilogue_;
     using EpilogueOutputOp = typename Epilogue::OutputOp;
     using ThreadblockSwizzle = ThreadblockSwizzle_;
     using ConvProblemSize = ConvProblemSize_;
 
-    static Operator const kConvolutionalOperator = ConvOperator;
-
     using ElementSrc = typename Mma::IteratorSrc::Element;
     using LayoutSrc = typename Mma::IteratorSrc::Layout;
-    using ElementFilter = typename Mma::IteratorFilter::Element;
-    using LayoutFilter = typename Mma::IteratorFilter::Layout;
-    using ElementDst = typename EpilogueOutputOp::ElementOutput;
-    using LayoutDst = typename Mma::LayoutDst;
-    using ElementBias = typename EpilogueOutputOp::ElementBias;
-    using LayoutBias = LayoutDst;
+    using ElementDiff = typename Mma::IteratorFilter::Element;
+    using LayoutDiff = typename Mma::IteratorFilter::Layout;
+    using ElementGrad = typename EpilogueOutputOp::ElementOutput;
+    using LayoutGrad = typename Mma::LayoutDst;
 
     using ElementAccumulator = typename EpilogueOutputOp::ElementAccumulator;
     using ElementCompute = typename EpilogueOutputOp::ElementCompute;
@@ -106,9 +100,8 @@ struct ImplicitBatchedGemmTnDepthwiseConvolution {
     using InstructionShape = typename ArchMmaOperator::Shape;
 
     using TensorRefSrc = typename Mma::IteratorSrc::TensorRef;
-    using TensorRefFilter = typename Mma::IteratorFilter::TensorRef;
-    using TensorRefBias = cutlass::TensorRef<ElementBias, LayoutBias>;
-    using TensorRefDst = cutlass::TensorRef<ElementDst, LayoutDst>;
+    using TensorRefDiff = typename Mma::IteratorFilter::TensorRef;
+    using TensorRefGrad = cutlass::TensorRef<ElementGrad, LayoutGrad>;
 
     static int const kStages = Mma::kStages;
 
@@ -116,22 +109,15 @@ struct ImplicitBatchedGemmTnDepthwiseConvolution {
     using WarpCount = typename Mma::WarpCount;
     static int const kThreadCount = 32 * WarpCount::kCount;
 
-    struct ExtraParam {
-        typename Mma::IteratorSrc::Params::ExtraParam extra_param_src;
-    };
-
     /// Argument structure
     struct Arguments {
         ConvProblemSize problem_size;
         TensorRefSrc ref_src;
-        TensorRefFilter ref_filter;
-        TensorRefBias ref_bias;
-        TensorRefDst ref_z;
-        TensorRefDst ref_dst;
+        TensorRefDiff ref_diff;
+        TensorRefGrad ref_grad;
         typename EpilogueOutputOp::Params output_op;
         typename Mma::TransformSrc::Params transform_src;
-        typename Mma::TransformFilter::Params transform_filter;
-        ExtraParam extra_param;
+        typename Mma::TransformFilter::Params transform_diff;
 
         /// Default ctor
         CUTLASS_HOST_DEVICE
@@ -144,27 +130,21 @@ struct ImplicitBatchedGemmTnDepthwiseConvolution {
         /// Constructs an Arguments structure
         CUTLASS_HOST_DEVICE
         Arguments(ConvProblemSize const& problem_size_,
-                  TensorRefSrc const& ref_src_,
-                  TensorRefFilter const& ref_filter_,
-                  TensorRefBias const& ref_bias_, TensorRefDst const& ref_z_,
-                  TensorRefDst const& ref_dst_,
+                  TensorRefSrc const& ref_src_, TensorRefDiff const& ref_diff_,
+                  TensorRefGrad const& ref_grad_,
                   typename EpilogueOutputOp::Params epilogue_ =
                           typename EpilogueOutputOp::Params(),
                   typename Mma::TransformSrc::Params transform_src_ =
                           typename Mma::TransformSrc::Params(),
-                  typename Mma::TransformFilter::Params transform_filter_ =
-                          typename Mma::TransformFilter::Params(),
-                  ExtraParam extra_param_ = {})
+                  typename Mma::TransformFilter::Params transform_diff_ =
+                          typename Mma::TransformFilter::Params())
                 : problem_size(problem_size_),
                   ref_src(ref_src_),
-                  ref_filter(ref_filter_),
-                  ref_bias(ref_bias_),
-                  ref_z(ref_z_),
-                  ref_dst(ref_dst_),
+                  ref_diff(ref_diff_),
+                  ref_grad(ref_grad_),
                   output_op(epilogue_),
                   transform_src(transform_src_),
-                  transform_filter(transform_filter_),
-                  extra_param(extra_param_) {}
+                  transform_diff(transform_diff_) {}
     };
 
     /// Parameters structure
@@ -173,27 +153,24 @@ struct ImplicitBatchedGemmTnDepthwiseConvolution {
         cutlass::gemm::GemmCoord grid_tiled_shape;
         typename Mma::IteratorSrc::Params params_src;
         TensorRefSrc ref_src;
-        typename Mma::IteratorFilter::Params params_filter;
-        TensorRefFilter ref_filter;
-        typename Epilogue::BiasTileIterator::Params params_bias;
-        TensorRefBias ref_bias;
-        typename Epilogue::OutputTileIterator::Params params_dst;
-        TensorRefDst ref_dst;
-        typename Epilogue::OutputTileIterator::Params params_z;
-        TensorRefDst ref_z;
+        typename Mma::IteratorFilter::Params params_diff;
+        TensorRefDiff ref_diff;
+        typename Epilogue::OutputTileIterator::Params params_grad;
+        TensorRefGrad ref_grad;
         typename EpilogueOutputOp::Params output_op;
         typename Mma::TransformSrc::Params transform_src;
-        typename Mma::TransformFilter::Params transform_filter;
+        typename Mma::TransformFilter::Params transform_diff;
 
         cutlass::gemm::GemmCoord gemm_problem_size;
         int* workspace;
+        int conv_k_iterations;
 
         //
         // Methods
         //
 
         CUTLASS_HOST_DEVICE
-        Params() {}
+        Params() : conv_k_iterations(0) {}
 
         CUTLASS_HOST_DEVICE
         Params(Arguments const& args,
@@ -201,32 +178,21 @@ struct ImplicitBatchedGemmTnDepthwiseConvolution {
                int* workspace_ = nullptr)
                 : problem_size(args.problem_size),
                   grid_tiled_shape(grid_tiled_shape_),
-                  params_src(args.ref_src.layout(), args.problem_size,
-                             args.extra_param.extra_param_src),
+                  params_src(args.ref_src.layout(), args.problem_size),
                   ref_src(args.ref_src),
-                  params_filter(args.ref_filter.layout(), args.problem_size),
-                  ref_filter(args.ref_filter),
-                  params_bias(args.ref_bias.layout()),
-                  ref_bias(args.ref_bias),
-                  params_dst(args.ref_dst.layout(), kConvolutionalOperator,
-                             args.problem_size),
-                  ref_dst(args.ref_dst),
-                  params_z(args.ref_z.layout(), kConvolutionalOperator,
-                           args.problem_size),
-                  ref_z(args.ref_z),
+                  params_diff(args.ref_diff.layout(), args.problem_size),
+                  ref_diff(args.ref_diff),
+                  params_grad(args.ref_grad.layout(), args.problem_size),
+                  ref_grad(args.ref_grad),
                   output_op(args.output_op),
                   transform_src(args.transform_src),
-                  transform_filter(args.transform_filter),
+                  transform_diff(args.transform_diff),
                   workspace(workspace_) {
-            if (kConvolutionalOperator == conv::Operator::kDgrad) {
-                gemm_problem_size = cutlass::gemm::GemmCoord(
-                        problem_size.N, problem_size.H * problem_size.W,
-                        problem_size.P * problem_size.Q);
-            } else {  // Fprop
-                gemm_problem_size = cutlass::gemm::GemmCoord(
-                        problem_size.N, problem_size.P * problem_size.Q,
-                        problem_size.H * problem_size.W);
-            }
+            gemm_problem_size = cutlass::gemm::GemmCoord(
+                    problem_size.P * problem_size.Q,
+                    problem_size.H * problem_size.W, problem_size.N);
+            conv_k_iterations = (gemm_problem_size.k() + Mma::Shape::kK - 1) /
+                                Mma::Shape::kK;
         }
     };
 
@@ -241,42 +207,34 @@ struct ImplicitBatchedGemmTnDepthwiseConvolution {
     //
 
     CUTLASS_HOST_DEVICE
-    ImplicitBatchedGemmTnDepthwiseConvolution() {}
+    ImplicitBatchedGemmDepthwiseConvolution2dWgrad() {}
 
     /// Determines whether kernel satisfies alignment
     static Status can_implement(
             ConvProblemSize problem_size,
             typename Mma::IteratorSrc::TensorRef ref_src,
-            typename Mma::IteratorFilter::TensorRef ref_filter,
-            typename Epilogue::BiasTileIterator::TensorRef ref_bias,
-            typename Epilogue::OutputTileIterator::TensorRef ref_z,
-            typename Epilogue::OutputTileIterator::TensorRef ref_dst) {
+            typename Mma::IteratorFilter::TensorRef ref_diff,
+            typename Epilogue::OutputTileIterator::TensorRef ref_grad) {
         static int const kAlignmentSrc =
                 Mma::IteratorSrc::AccessType::kElements;
-        static int const kAlignmentFilter =
+        static int const kAlignmentDiff =
                 Mma::IteratorFilter::AccessType::kElements;
-        static int const kAlignmentDst =
+        static int const kAlignmentGrad =
                 Epilogue::OutputTileIterator::kElementsPerAccess;
 
         if (!TensorRef_aligned(ref_src, kAlignmentSrc)) {
             return Status::kErrorMisalignedOperand;
         }
 
-        if (!TensorRef_aligned(ref_filter, kAlignmentFilter)) {
+        if (!TensorRef_aligned(ref_diff, kAlignmentDiff)) {
             return Status::kErrorMisalignedOperand;
         }
 
-        if (!TensorRef_aligned(ref_dst, kAlignmentDst)) {
+        if (!TensorRef_aligned(ref_grad, kAlignmentGrad)) {
             return Status::kErrorMisalignedOperand;
         }
 
-        if (!TensorRef_aligned(ref_z, kAlignmentDst)) {
-            return Status::kErrorMisalignedOperand;
-        }
-
-        Status status = Mma::IteratorFilter::can_implement(problem_size);
-
-        return status;
+        return Status::kSuccess;
     }
 
     /// Gets the workspace size
@@ -292,40 +250,46 @@ struct ImplicitBatchedGemmTnDepthwiseConvolution {
                 threadblock_swizzle.template get_tile_offset<Mma::Shape>();
 
         // Compute initial location in logical coordinates
-        cutlass::MatrixCoord tb_offset_src{threadblock_tile_offset.m(), 0};
+        cutlass::MatrixCoord tb_offset_src{0, threadblock_tile_offset.n()};
 
-        cutlass::MatrixCoord tb_offset_filter{0, threadblock_tile_offset.n()};
+        cutlass::MatrixCoord tb_offset_diff{0, threadblock_tile_offset.m()};
+
+        cutlass::MatrixCoord threadblock_offset(threadblock_tile_offset.m(),
+                                                threadblock_tile_offset.n());
 
         // Compute position within threadblock
         int thread_idx = threadIdx.x;
 
-        // Construct iterator to Filter Tensor operand
-        typename Mma::IteratorFilter iterator_filter(params.params_filter,
-                                                     params.ref_filter.data());
+        // Broadcast the warp_id computed by lane 0 to ensure dependent
+        // code is compiled as warp-uniform.
+        int warp_idx = __shfl_sync(0xffffffff, threadIdx.x / 32, 0);
+        int lane_idx = threadIdx.x % 32;
 
-        cutlass::MatrixCoord extent_filter{params.gemm_problem_size.k(),
-                                           params.gemm_problem_size.n()};
+        // Construct tile iterator writing to gradient tensor.
+        typename Epilogue::OutputTileIterator iterator_grad(
+                params.params_grad, params.ref_grad.data(),
+                {params.gemm_problem_size.m(), params.gemm_problem_size.n()},
+                thread_idx, warp_idx, lane_idx, threadblock_offset);
 
-        // Update extent and threadblock_offset
-        iterator_filter.initialize(thread_idx, extent_filter, tb_offset_filter);
-
-        // Compute threadblock_offset of Src Tensor
-        tb_offset_src = {threadblock_tile_offset.m(), tb_offset_filter.row()};
+        // Early stop for total threadblock to reduce the compution
+        if (iterator_grad.early_stop(threadblock_offset))
+            return;
 
         // Construct iterator to Src Tensor operand
         typename Mma::IteratorSrc iterator_src(
                 params.params_src, params.ref_src.data(),
-                {params.gemm_problem_size.m(), extent_filter.row()}, thread_idx,
-                tb_offset_src);
+                {params.gemm_problem_size.k(), params.gemm_problem_size.n()},
+                thread_idx, tb_offset_src);
+
+        // Construct iterator to Filter Tensor operand
+        typename Mma::IteratorFilter iterator_diff(
+                params.params_diff, params.ref_diff.data(),
+                {params.gemm_problem_size.k(), params.gemm_problem_size.m()},
+                thread_idx, tb_offset_diff);
 
         iterator_src.add_coord_offset({0, 0, 0, threadblock_tile_offset.k()});
-        iterator_filter.add_coord_offset(
-                {threadblock_tile_offset.k(), 0, 0, 0});
-
-        // Broadcast the warp_id computed by lane 0 to ensure dependent code
-        // is compiled as warp-uniform.
-        int warp_idx = __shfl_sync(0xffffffff, threadIdx.x / 32, 0);
-        int lane_idx = threadIdx.x % 32;
+        iterator_diff.add_coord_offset({0, 0, 0, threadblock_tile_offset.k()});
+        iterator_grad.add_coord_offset({threadblock_tile_offset.k(), 0, 0, 0});
 
         //
         // Main loop
@@ -337,50 +301,21 @@ struct ImplicitBatchedGemmTnDepthwiseConvolution {
         typename Mma::FragmentDst accumulators;
         accumulators.clear();
 
-        mma(iterator_filter.conv_k_iterations(), accumulators, iterator_src,
-            iterator_filter, accumulators, params.transform_src,
-            params.transform_filter);
+        mma(params.conv_k_iterations, accumulators, iterator_src, iterator_diff,
+            accumulators, params.transform_src, params.transform_diff);
 
         //
         // Epilogue
         //
-
         EpilogueOutputOp output_op(params.output_op);
 
-        //
-        // Masked tile iterators constructed from members
-        //
-        // assume identity swizzle
-        cutlass::MatrixCoord threadblock_offset(threadblock_tile_offset.m(),
-                                                threadblock_tile_offset.n());
-
-        // Tile iterator load bias tensor
-        typename Epilogue::BiasTileIterator iterator_bias(
-                params.params_bias, params.ref_bias.data(),
-                {params.gemm_problem_size.m(), params.gemm_problem_size.n()},
-                thread_idx, threadblock_offset);
-
-        // Tile iterator writing to destination tensor.
-        typename Epilogue::OutputTileIterator iterator_dst(
-                params.params_dst, params.ref_dst.data(),
-                {params.gemm_problem_size.m(), params.gemm_problem_size.n()},
-                thread_idx, threadblock_offset);
-
-        // Tile iterator loading from source tensor.
-        typename Epilogue::OutputTileIterator iterator_z(
-                params.params_z, params.ref_z.data(),
-                {params.gemm_problem_size.m(), params.gemm_problem_size.n()},
-                thread_idx, threadblock_offset);
-
+        /// Construct threadblock-scoped epilogue to write back to output tensor
         Epilogue epilogue(shared_storage.epilogue, thread_idx, warp_idx,
                           lane_idx);
-        iterator_bias.add_coord_offset({0, 0, 0, threadblock_tile_offset.k()});
-        iterator_z.add_coord_offset({0, 0, 0, threadblock_tile_offset.k()});
-        iterator_dst.add_coord_offset({0, 0, 0, threadblock_tile_offset.k()});
 
-        // Execute the epilogue operator to update the destination tensor.
-        epilogue(output_op, iterator_dst, accumulators, iterator_bias,
-                 iterator_z);
+        // Execute the epilogue operator to update the gradient
+        // tensor.
+        epilogue(output_op, iterator_grad, accumulators);
     }
 };
 

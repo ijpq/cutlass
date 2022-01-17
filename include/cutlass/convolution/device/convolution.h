@@ -45,6 +45,7 @@
 #include "cutlass/convolution/threadblock/threadblock_swizzle.h"
 
 #include "cutlass/convolution/device/default_convolution_configuration.h"
+#include "cutlass/convolution/kernel/default_conv2d_wgrad.h"
 #include "cutlass/convolution/kernel/default_conv2d_dgrad.h"
 #include "cutlass/convolution/kernel/default_conv2d_fprop.h"
 
@@ -502,6 +503,240 @@ public:
             if (result != cudaSuccess) {
                 return Status::kErrorInternal;
             }
+        }
+
+        cutlass::Kernel<ConvolutionKernel>
+                <<<grid, block, smem_size, stream>>>(params_);
+
+        result = cudaGetLastError();
+
+        return result == cudaSuccess ? Status::kSuccess
+                                     : Status::kErrorInternal;
+    }
+
+    /// Runs the kernel using initialized state.
+    Status operator()(cudaStream_t stream = nullptr) { return run(stream); }
+
+    /// Runs the kernel using initialized state.
+    Status operator()(Arguments const& args, void* workspace = nullptr,
+                      cudaStream_t stream = nullptr) {
+        Status status = initialize(args, workspace);
+
+        if (status == Status::kSuccess) {
+            status = run(stream);
+        }
+
+        return status;
+    }
+};
+
+////////////////////////////////////////////////////////////////////////////////
+/*! ConvolutionBackwardFilter device-level operator.
+ *  This operator is only used for depthwise convolution now
+ */
+template <
+        /// Element type for Src Tensor operand
+        typename ElementSrc_,
+        /// Layout type for Src Tensor operand
+        typename LayoutSrc_,
+        /// Element type for Diff Tensor operand
+        typename ElementDiff_,
+        /// Layout type for Diff Tensor operand
+        typename LayoutDiff_,
+        /// Element type for Grad Tensor operands
+        typename ElementGrad_,
+        /// Layout type for Grad Tensor operands
+        typename LayoutGrad_,
+        /// Element type for internal accumulation
+        typename ElementAccumulator_,
+        /// Convolution Type
+        ConvType ConvolutionType = ConvType::kDepthwiseConvolution,
+        /// Operator class tag
+        typename OperatorClass_ = arch::OpClassSimt,
+        /// Tag indicating architecture to tune for
+        typename ArchTag_ = arch::Sm61,
+        /// Threadblock-level tile size (concept: GemmShape)
+        typename ThreadblockShape_ = typename DefaultConvolutionConfiguration<
+                OperatorClass_, ArchTag_, ElementSrc_, ElementDiff_,
+                ElementGrad_, ElementAccumulator_>::ThreadblockShape,
+        /// Warp-level tile size (concept: GemmShape)
+        typename WarpShape_ = typename DefaultConvolutionConfiguration<
+                OperatorClass_, ArchTag_, ElementSrc_, ElementDiff_,
+                ElementGrad_, ElementAccumulator_>::WarpShape,
+        /// Instruction-level tile size (concept: GemmShape)
+        typename InstructionShape_ = typename DefaultConvolutionConfiguration<
+                OperatorClass_, ArchTag_, ElementSrc_, ElementDiff_,
+                ElementGrad_, ElementAccumulator_>::InstructionShape,
+        /// Epilogue output operator
+        typename EpilogueOutputOp_ = typename DefaultConvolutionConfiguration<
+                OperatorClass_, ArchTag_, ElementSrc_, ElementDiff_,
+                ElementGrad_, ElementAccumulator_>::EpilogueOutputOp,
+        /// Threadblock-level swizzling operator
+        typename ThreadblockSwizzle_ = typename threadblock::
+                DepthwiseConvolutionWgradThreadblockSwizzle,
+        /// Number of stages used in the pipelined mainloop
+        int Stages = DefaultConvolutionConfiguration<
+                OperatorClass_, ArchTag_, ElementSrc_, ElementDiff_,
+                ElementGrad_, ElementAccumulator_>::kStages,
+        /// Access granularity of Src Tensor in units of elements
+        int AlignmentSrc = DefaultConvolutionConfiguration<
+                OperatorClass_, ArchTag_, ElementSrc_, ElementDiff_,
+                ElementGrad_, ElementAccumulator_>::kAlignmentSrc,
+        /// Access granularity of Filter Tensor in units of elements
+        int AlignmentDiff = DefaultConvolutionConfiguration<
+                OperatorClass_, ArchTag_, ElementSrc_, ElementDiff_,
+                ElementGrad_, ElementAccumulator_>::kAlignmentFilter,
+        /// whether use special optimization for deconv stride 2
+        cutlass::conv::SpecialOptimizeDesc SpecialOpt =
+                cutlass::conv::SpecialOptimizeDesc::NONE,
+        /// Operation performed by Convolution
+        typename Operator_ = typename DefaultConvolutionConfiguration<
+                OperatorClass_, ArchTag_, ElementSrc_, ElementDiff_,
+                ElementGrad_, ElementAccumulator_>::Operator,
+        /// Implicit Gemm Mode
+        cutlass::conv::ImplicitGemmMode GemmMode =
+                cutlass::conv::ImplicitGemmMode::GEMM_NT>
+class ConvolutionBackwardFilter {
+public:
+    using ElementSrc = ElementSrc_;
+    using LayoutSrc = LayoutSrc_;
+    using ElementDiff = ElementDiff_;
+    using LayoutDiff = LayoutDiff_;
+    using ElementGrad = ElementGrad_;
+    using LayoutGrad = LayoutGrad_;
+    using ElementAccumulator = ElementAccumulator_;
+    using OperatorClass = OperatorClass_;
+    using ArchTag = ArchTag_;
+    using ThreadblockShape = ThreadblockShape_;
+    using WarpShape = WarpShape_;
+    using InstructionShape = InstructionShape_;
+    using EpilogueOutputOp = EpilogueOutputOp_;
+    using ThreadblockSwizzle = ThreadblockSwizzle_;
+    using Operator = Operator_;
+    static const ConvType kConvolutionType = ConvolutionType;
+    static int const kStages = Stages;
+    static int const kAlignmentSrc = AlignmentSrc;
+    static int const kAlignmentDiff = AlignmentDiff;
+    static int const kAlignmentGrad = EpilogueOutputOp::kCount;
+    static cutlass::conv::SpecialOptimizeDesc const kSpecialOpt = SpecialOpt;
+    static cutlass::conv::ImplicitGemmMode const kGemmMode = GemmMode;
+
+    /// SpecialOptimizeDesc is not used in the backward filter kernel now
+    using ConvolutionKernel =
+            typename cutlass::conv::kernel::DefaultConvolution2dWgrad<
+                    ElementSrc, LayoutSrc, ElementDiff, LayoutDiff, ElementGrad,
+                    LayoutGrad, ElementAccumulator, OperatorClass, ArchTag,
+                    ThreadblockShape, WarpShape, InstructionShape,
+                    EpilogueOutputOp, ThreadblockSwizzle, kStages, Operator,
+                    kAlignmentSrc, kAlignmentDiff, kGemmMode,
+                    kConvolutionType>::Kernel;
+
+    using TensorRefSrc = typename ConvolutionKernel::TensorRefSrc;
+    using TensorRefDiff = typename ConvolutionKernel::TensorRefDiff;
+    using TensorRefGrad = typename ConvolutionKernel::TensorRefGrad;
+
+    using Arguments = typename ConvolutionKernel::Arguments;
+
+    using ConvolutionParameter = typename ConvolutionKernel::ConvProblemSize;
+
+    static cutlass::conv::Operator const kConvolutionalOperator =
+            ConvolutionKernel::kConvolutionalOperator;
+
+private:
+    /// Kernel parameters object
+    typename ConvolutionKernel::Params params_;
+
+public:
+    /// Constructs the GEMM.
+    ConvolutionBackwardFilter() {}
+
+    /// Determines whether the GEMM can execute the given problem.
+    /// Determines whether the Implicit GEMM can execute the given problem.
+    static Status can_implement(Arguments const& args) {
+        Status status = ConvolutionKernel::can_implement(
+                args.problem_size, args.ref_src, args.ref_diff, args.ref_grad);
+
+        if (status != Status::kSuccess) {
+            return status;
+        }
+
+        return Status::kSuccess;
+    }
+
+    /// Gets the workspace size
+    static size_t get_workspace_size(Arguments const& args) {
+        return ConvolutionKernel::get_workspace_size(args.problem_size);
+    }
+
+    /// Initializes GEMM state from arguments.
+    Status initialize(Arguments const& args, void* workspace = nullptr,
+                      cudaStream_t stream = nullptr) {
+        // Determine grid shape
+        ThreadblockSwizzle threadblock_swizzle;
+
+        cutlass::gemm::GemmCoord grid_shape =
+                threadblock_swizzle.get_tiled_shape(
+                        args.problem_size,
+                        {ThreadblockShape::kM, ThreadblockShape::kN,
+                         ThreadblockShape::kK});
+
+        // Initialize the Params structure
+        params_ = typename ConvolutionKernel::Params{
+                args, grid_shape, static_cast<int*>(workspace)};
+
+        return Status::kSuccess;
+    }
+
+    /// Initializes GEMM state from arguments.
+    Status update(Arguments const& args, void* workspace = nullptr) {
+        // update the params structure from the arguments
+        params_.ref_src.reset(args.ref_src.data());
+        params_.ref_diff.reset(args.ref_diff.data());
+        params_.ref_grad.reset(args.ref_grad.data());
+        params_.output_op = args.output_op;
+        params_.transform_src = args.transform_src;
+        params_.transform_filter = args.transform_filter;
+        params_.workspace = static_cast<int*>(workspace);
+
+        return Status::kSuccess;
+    }
+
+    /// Runs the kernel using initialized state.
+    Status run(cudaStream_t stream = nullptr) {
+        ThreadblockSwizzle threadblock_swizzle;
+
+        dim3 grid =
+                threadblock_swizzle.get_grid_shape(params_.grid_tiled_shape);
+        dim3 block(ConvolutionKernel::kThreadCount, 1, 1);
+
+        cudaError_t result;
+
+        int smem_size = int(sizeof(typename ConvolutionKernel::SharedStorage));
+
+        if (smem_size >= (48 << 10)) {
+            result = cudaFuncSetAttribute(
+                    Kernel<ConvolutionKernel>,
+                    cudaFuncAttributeMaxDynamicSharedMemorySize, smem_size);
+
+            if (result != cudaSuccess) {
+                return Status::kErrorInternal;
+            }
+
+            result = cudaFuncSetAttribute(
+                    Kernel<ConvolutionKernel>,
+                    cudaFuncAttributePreferredSharedMemoryCarveout, 100);
+
+            if (result != cudaSuccess) {
+                return Status::kErrorInternal;
+            }
+        }
+
+        size_t count = params_.ref_grad.layout().capacity(
+                               params_.problem_size.filter_extent()) *
+                       sizeof_bits<ElementGrad>::value / 8;
+        result = cudaMemsetAsync(params_.ref_grad.data(), 0, count, stream);
+        if (result != cudaSuccess) {
+            return Status::kErrorInternal;
         }
 
         cutlass::Kernel<ConvolutionKernel>

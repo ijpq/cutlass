@@ -77,7 +77,7 @@ using InstructionShape =
 
 // This code section describes how threadblocks are scheduled on GPU
 using SwizzleThreadBlock =
-        cutlass::conv::threadblock::DepthwiseConvolutionFpropThreadblockSwizzle;
+        cutlass::conv::threadblock::DepthwiseConvolutionDgradThreadblockSwizzle;
 
 // Number of pipelines you want to use
 constexpr int NumStages = 2;
@@ -572,7 +572,7 @@ int main(int argc, char const** args) {
     CUDA_CHECK(cudaGetDeviceProperties(&props, 0));
 
     if (!(props.major > 5 || (props.major == 5 && props.minor >= 0))) {
-        std::cerr << "This example (16_large_depthwise_conv2dfrop) must be run "
+        std::cerr << "This example (17_large_depthwise_conv2ddgrad) must be run "
                      "on a machine with compute "
                      "capability at least 50."
                   << std::endl;

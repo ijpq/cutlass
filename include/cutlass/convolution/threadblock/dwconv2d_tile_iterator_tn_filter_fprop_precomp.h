@@ -283,8 +283,8 @@ public:
             Pointer pointer)
             : params_(params), pointer_(pointer), is_residue_tile_(true) {}
 
-    /// Intialize a TileIterator from its precomputed state, threadblock offset
-    /// and thread ID
+    /// Intialize a TileIterator from its precomputed state, threadblock
+    /// offset, and thread ID
     CUTLASS_HOST_DEVICE
     Dwconv2dTileFilterIteratorFpropPrecomp& initialize(
             /// ID of each participating thread

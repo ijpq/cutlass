@@ -181,7 +181,6 @@ public:
         //   dimension _n: the warp's position within the threadblock along the
         //   N dimension _k: the warp's position within the threadblock along
         //   the K dimension
-
         int warp_idx_mn =
                 warp_idx % (Base::WarpCount::kM * Base::WarpCount::kN);
         int warp_idx_k = warp_idx / (Base::WarpCount::kM * Base::WarpCount::kN);
@@ -213,7 +212,6 @@ public:
             TransformFilter transform_filter =
                     TransformFilter()) {  ///< transformation applied to Filter
                                           ///< Tensor fragment
-
         //
         // Prologue
         //

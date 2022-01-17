@@ -293,6 +293,16 @@ struct TileMap<layout::TensorNCHW, TileMapType::kRow2OHW_Col2IHW> {
         return MatrixCoord{h, w};
     }
     CUTLASS_HOST_DEVICE
+    MatrixCoord operator()(MatrixCoord const& coord) const {
+        int oh, ow;
+        fast_divmod(oh, ow, coord.row(), wo_, wo_mul_, wo_shr_);
+        int ih, iw;
+        fast_divmod(ih, iw, coord.column(), wi_, wi_mul_, wi_shr_);
+        int fh = ih - oh * sh_ + ph_;
+        int fw = iw - ow * sw_ + pw_;
+        return MatrixCoord{fh, fw};
+    }
+    CUTLASS_HOST_DEVICE
     Coord<2> operator()(Coord<2> const& ranges, int const& offset) const {
         int lo, hi, mod;
         fast_divmod(lo, mod, ranges.at(0), wi_, wi_mul_, wi_shr_);
@@ -301,6 +311,19 @@ struct TileMap<layout::TensorNCHW, TileMapType::kRow2OHW_Col2IHW> {
         hi = (hi + ph_) / sh_ + 1;
         lo = lo >= 0 ? lo : 0;
         return make_Coord(lo * wo_, hi * wo_);
+    }
+    CUTLASS_HOST_DEVICE
+    Coord<2> operator()(Coord<2> const& row_ranges,
+                        Coord<2> const& column_ranges) const {
+        int input_lo, input_hi, mod;
+        fast_divmod(input_lo, mod, column_ranges.at(0), wi_, wi_mul_, wi_shr_);
+        fast_divmod(input_hi, mod, column_ranges.at(1), wi_, wi_mul_, wi_shr_);
+        int output_lo, output_hi;
+        fast_divmod(output_lo, mod, row_ranges.at(0), wo_, wo_mul_, wo_shr_);
+        fast_divmod(output_hi, mod, row_ranges.at(1), wo_, wo_mul_, wo_shr_);
+        int filter_lo = input_lo - output_hi * sh_ + ph_;
+        int filter_hi = input_hi - output_lo * sh_ + ph_;
+        return make_Coord(filter_lo, filter_hi);
     }
 };
 

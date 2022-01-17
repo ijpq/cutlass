@@ -261,11 +261,6 @@ private:
     /// Internal state counter
     int state_[3];
 
-private:
-    //
-    // Methods
-    //
-
 public:
     //
     // Methods
@@ -490,6 +485,215 @@ public:
 
     CUTLASS_DEVICE
     Dwconv2dPredicatedTileIterator& add_coord_offset(
+            TensorCoord const& coord_offset) {
+        add_pointer_offset(params_.layout_(coord_offset));
+        return *this;
+    }
+};
+
+////////////////////////////////////////////////////////////////////////////////
+
+/// Tile iterator used to access global memory for dwconv2d wgrad operator.
+///
+template <typename Shape_,     ///< Threadblock-scoped tile size (concept:
+                               ///< GemmShape)
+          typename Operator_,  /// Warp-scoped epilogue components (concept:
+                               /// gemm::warp::Mma)
+          typename Element_,   ///< Element data type
+          typename Layout_     ///< Tensor Layout
+          >
+class Dwconv2dPredicatedAccessTileIterator {
+public:
+    using Shape = Shape_;
+    using Operator = Operator_;
+    using Element = Element_;
+    using Layout = Layout_;
+
+    using TensorRef = TensorRef<Element, Layout>;
+    using ConstTensorRef = typename TensorRef::ConstTensorRef;
+
+    using Index = typename Layout::Index;
+    using LongIndex = typename Layout::LongIndex;
+    using TensorCoord = typename Layout::TensorCoord;
+
+    /// Logical layout
+    using LogicalLayout = layout::RowMajor;
+
+    /// Logical tensor coord
+    using LogicalCoord = typename LogicalLayout::TensorCoord;
+
+    using ConvProblemSize = typename conv::Conv2dProblemSize;
+
+    static int const kElementsPerAccess = 1;
+
+    using Policy = typename Operator::Policy;
+    /// Shape of the warp in lanes
+    using WarpShape = typename Policy::WarpShape;
+    /// Layout function of lanes
+    using LaneLayout = typename Policy::LaneLayout;
+    /// size of each lane's thread-level matrix product
+    using LaneMmaShape = typename Policy::LaneMmaShape;
+
+    /// Accumulator tile shape of each lane
+    using AccumulatorTileShape =
+            MatrixShape<Operator::Shape::kM / WarpShape::kRow,
+                        Operator::Shape::kN / WarpShape::kColumn>;
+
+    /// Number of mma operations performed
+    using MmaIterations =
+            MatrixShape<AccumulatorTileShape::kRow / LaneMmaShape::kM,
+                        AccumulatorTileShape::kColumn / LaneMmaShape::kN>;
+
+    /// Number of warps spanning threadblock-scoped tile
+    using WarpCount = gemm::GemmShape<Shape::kM / Operator::Shape::kM,
+                                      Shape::kN / Operator::Shape::kN,
+                                      Shape::kK / Operator::Shape::kK>;
+    static int const kThreads = WarpCount::kCount;
+
+    /// Memory access size
+    using AccessType = AlignedArray<Element, kElementsPerAccess>;
+
+    /// Tilemap
+    using TileMap = conv::threadblock::TileMap<
+            Layout, conv::threadblock::TileMapType::kRow2OHW_Col2IHW>;
+
+    //
+    // Parameters struct
+    //
+
+    struct Params {
+    public:
+    private:
+        friend Dwconv2dPredicatedAccessTileIterator;
+
+        //
+        // Data members
+        //
+
+        /// layout object used to compute the coord offset
+        Layout layout_;
+
+        TileMap tile_map_;
+
+        Index fh_;
+        Index fw_;
+
+    public:
+        //
+        // Methods
+        //
+
+        CUTLASS_HOST_DEVICE
+        Params() : layout_(Layout()), fh_(0), fw_(0) {}
+
+        CUTLASS_HOST_DEVICE
+        Params(Layout const& layout, ConvProblemSize const& problem_size)
+                : layout_(layout),
+                  tile_map_(problem_size.W, problem_size.Q,
+                            problem_size.stride_h, problem_size.stride_w,
+                            problem_size.pad_h, problem_size.pad_w),
+                  fh_(problem_size.R),
+                  fw_(problem_size.S) {}
+    };
+
+    /// Mask object
+    using Mask = platform::none_type;
+
+    using Pointer = Element*;
+
+    using BytePointer = char*;
+
+private:
+    //
+    // Data members
+    //
+
+    /// Parameters structure containing reference and precomputed state.
+    Params const& params_;
+
+    /// Internal pointer
+    BytePointer pointer_;
+
+    LogicalCoord thread_origin_;
+
+    LogicalCoord extent_;
+
+private:
+    //
+    // Methods
+    //
+
+public:
+    //
+    // Methods
+    //
+
+    /// Constructor
+    CUTLASS_DEVICE
+    Dwconv2dPredicatedAccessTileIterator(
+            Params const& params,  ///< Host-constructable params object
+            Element* pointer, LogicalCoord extent,
+            int thread_idx,  ///< ID of a thread within the threadblock
+            int warp_idx,    ///< ID of warp in threadblock
+            int lane_idx,    ///< ID of thread within warp
+            LogicalCoord const& threadblock_offset = LogicalCoord())
+            : params_(params) {
+        int warp_mn = warp_idx % (WarpCount::kM * WarpCount::kN);
+        int warp_m = warp_mn % WarpCount::kM;
+        int warp_n = warp_mn / WarpCount::kM;
+
+        auto lane_layout = Policy::get_lane_layout();
+        LogicalCoord lane_origin =
+                lane_layout.inverse(lane_idx) *
+                MatrixCoord(LaneMmaShape::kM, LaneMmaShape::kN);
+
+        thread_origin_ = threadblock_offset +
+                         LogicalCoord{warp_m * Operator::Shape::kM,
+                                      warp_n * Operator::Shape::kN} +
+                         lane_origin;
+        extent_ = extent - thread_origin_;
+        pointer_ = reinterpret_cast<BytePointer>(pointer);
+    }
+
+    CUTLASS_DEVICE
+    bool early_stop(LogicalCoord const& threadblock_offset) {
+        auto filter_ranges = params_.tile_map_(
+                make_Coord(threadblock_offset.row(),
+                           threadblock_offset.row() + Shape::kM),
+                make_Coord(threadblock_offset.column(),
+                           threadblock_offset.column() + Shape::kN));
+        return filter_ranges.at(0) >= params_.fh_ || filter_ranges.at(1) < 0;
+    }
+
+    /// Adds a pointer offset in units of Element
+    CUTLASS_HOST_DEVICE
+    void add_pointer_offset(LongIndex pointer_offset) {
+        pointer_ += pointer_offset * sizeof_bits<Element>::value / 8;
+    }
+
+    /// Returns a pointer
+    CUTLASS_HOST_DEVICE
+    AccessType* get(TensorCoord const& coord = TensorCoord()) const {
+        return reinterpret_cast<AccessType*>(
+                pointer_ +
+                params_.layout_(coord) * sizeof_bits<Element>::value / 8);
+    }
+
+    /// Returns whether access is valid or not
+    CUTLASS_HOST_DEVICE
+    bool valid(TensorCoord& tensor_coord,
+               LogicalCoord const& coord = LogicalCoord()) {
+        bool guard = coord.row() < extent_.row() &&
+                     coord.column() < extent_.column();
+        auto coord_ = thread_origin_ + coord;
+        auto filter = params_.tile_map_(coord_);
+        tensor_coord = TensorCoord(0, filter.row(), filter.column(), 0);
+        return guard && filter.row() >= 0 && filter.row() < params_.fh_ &&
+               filter.column() >= 0 && filter.column() < params_.fw_;
+    }
+
+    CUTLASS_DEVICE
+    Dwconv2dPredicatedAccessTileIterator& add_coord_offset(
             TensorCoord const& coord_offset) {
         add_pointer_offset(params_.layout_(coord_offset));
         return *this;
