@@ -63,10 +63,6 @@ public:
     using Layout = Layout_;
     using Element = Element_;
 
-    using OutputTileIterator =
-            Dwconv2dPredicatedAccessTileIterator<Shape, Operator, Element,
-                                                 Layout>;
-
     /// Number of warps spanning threadblock-scoped tile
     using WarpCount = gemm::GemmShape<Shape::kM / Operator::Shape::kM,
                                       Shape::kN / Operator::Shape::kN,
@@ -86,12 +82,6 @@ public:
     /// Reference to Output tensors
     using TensorRef = TensorRef<Element, Layout>;
 
-    /// Logical Coordinates
-    using LogicalCoord = typename OutputTileIterator::LogicalCoord;
-
-    /// Tensor Coordinates
-    using TensorCoord = typename Layout::TensorCoord;
-
     using Policy = typename Operator::Policy;
     /// Shape of the warp in lanes
     using WarpShape = typename Policy::WarpShape;
@@ -100,10 +90,39 @@ public:
     /// size of each lane's thread-level matrix product
     using LaneMmaShape = typename Policy::LaneMmaShape;
 
-    /// Number of mma operations performed
-    using MmaIterations = typename OutputTileIterator::MmaIterations;
+    /// Logical Layout
+    using LogicalLayout = cutlass::layout::RowMajor;
+
+    /// Logical Coordinates
+    using LogicalCoord = typename LogicalLayout::TensorCoord;
+
+    /// Tensor Coordinates
+    using TensorCoord = typename Layout::TensorCoord;
+
+    struct Detail {
+        static CUTLASS_DEVICE LogicalCoord get_lane_offset(int lane_idx) {
+            auto lane_layout = Policy::get_lane_layout();
+            LogicalCoord lane_offset =
+                    lane_layout.inverse(lane_idx) *
+                    LogicalCoord(LaneMmaShape::kM, LaneMmaShape::kN);
+            return lane_offset;
+        }
+    };
+
+    /// OutputTileIterator
+    using OutputTileIterator =
+            Dwconv2dPredicatedAccessTileIterator<Shape, Operator, Element,
+                                                 Layout, Detail>;
+
+    /// Accumulator tile shape of each lane
     using AccumulatorTileShape =
-            typename OutputTileIterator::AccumulatorTileShape;
+            MatrixShape<Operator::Shape::kM / WarpShape::kRow,
+                        Operator::Shape::kN / WarpShape::kColumn>;
+
+    /// Number of mma operations performed
+    using MmaIterations =
+            MatrixShape<AccumulatorTileShape::kRow / LaneMmaShape::kM,
+                        AccumulatorTileShape::kColumn / LaneMmaShape::kN>;
 
 public:
     /// Shared storage allocation needed by the epilogue

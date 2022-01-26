@@ -20,6 +20,9 @@ def _load_extension():
             "forward_fp32.cu",
             "backward_data_fp32.cu",
             "backward_filter_fp32.cu",
+            "forward_fp16.cu",
+            "backward_data_fp16.cu",
+            "backward_filter_fp16.cu",
         ],
         extra_include_paths=[
             ".",
@@ -35,16 +38,14 @@ def _load_extension():
 class _DepthWiseConv2dImplicitGEMM(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, w):
-        x = x.float(); w = w.float()
         ctx.save_for_backward(x, w)
-        return _extension.forward_fp32(x, w)
+        return _extension.forward_fp16(x, w)
 
     @staticmethod
     def backward(ctx, grad):
         x, w = ctx.saved_tensors
-        dx = _extension.backward_data_fp32(grad, w)
-        dw = _extension.backward_filter_fp32(grad, x, w)
-        dx = dx.half(); dw = dw.float()
+        dx = _extension.backward_data_fp16(grad, w)
+        dw = _extension.backward_filter_fp16(grad, x, w)
         return dx, dw
 
 class DepthWiseConv2dImplicitGEMM(nn.Conv2d):

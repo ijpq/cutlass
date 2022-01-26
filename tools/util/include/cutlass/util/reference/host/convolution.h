@@ -70,6 +70,16 @@ struct need_clamp {
             cutlass::platform::is_same<T, cutlass::int4b_t>::value ||
             cutlass::platform::is_same<T, cutlass::uint4b_t>::value;
 };
+
+template <typename T>
+static inline T round(T val) {
+    return std::round(val);
+}
+
+template <>
+inline cutlass::half_t round(cutlass::half_t val) {
+    return cutlass::half_t(std::round(static_cast<float>(val)));
+}
 }  // namespace detail
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -298,7 +308,7 @@ void Depsep_Fprop(
                         intermediate += gamma * tensor_z.at({n, p, q, g});
                     }
                     if (detail::need_round<ElementDst, ElementCompute>::value) {
-                        intermediate = std::round(intermediate);
+                        intermediate = detail::round(intermediate);
                     }
                     tensor_dst.at({n, p, q, g}) = convert_op(intermediate);
                 }
@@ -382,13 +392,17 @@ void Depsep_Dgrad(
                     // store ElementC
                     ElementCompute intermediate = alpha * ElementCompute(acc);
                     if (beta != ElementCompute()) {
-                        intermediate += beta * tensor_bias.at({0, 0, 0, g});
+                        intermediate +=
+                                beta *
+                                ElementCompute(tensor_bias.at({0, 0, 0, g}));
                     }
                     if (gamma != ElementCompute()) {
-                        intermediate += gamma * tensor_z.at({n, h, w, g});
+                        intermediate +=
+                                gamma *
+                                ElementCompute(tensor_z.at({n, h, w, g}));
                     }
                     if (detail::need_round<ElementDst, ElementCompute>::value) {
-                        intermediate = std::round(intermediate);
+                        intermediate = detail::round(intermediate);
                     }
                     tensor_dst.at({n, h, w, g}) = convert_op(intermediate);
                 }
@@ -463,7 +477,7 @@ void Depsep_Wgrad(
                 // store ElementC
                 ElementCompute intermediate = alpha * ElementCompute(acc);
                 if (detail::need_round<ElementGrad, ElementCompute>::value) {
-                    intermediate = std::round(intermediate);
+                    intermediate = detail::round(intermediate);
                 }
                 tensor_grad.at({g, r, s, 0}) = convert_op(intermediate);
             }
@@ -1761,7 +1775,7 @@ struct Deconv2d<conv::ConvType::kDepthwiseConvolution, ElementSrc, LayoutSrc,
                      ElementBias, LayoutBias, ElementDst, LayoutDst, ScalarType,
                      ComputeType, ConvertOp, multiply_add<ComputeType>>(
                 conv_param, tensor_src, tensor_filter, tensor_bias, tensor_dst,
-                tensor_dst, alpha, beta, 0);
+                tensor_dst, alpha, beta, ScalarType(0));
     }
 
     void operator()(conv::Conv2dProblemSize conv_param, ScalarType alpha,

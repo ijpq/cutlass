@@ -193,6 +193,7 @@ struct Conv2dWgradTestbed {
                                       seed + 2019));
         EXPECT_TRUE(initialize_tensor(tensor_diff.host_view(), init_diff,
                                       seed + 2018));
+
         tensor_src.sync_device();
         tensor_diff.sync_device();
     }

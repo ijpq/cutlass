@@ -110,11 +110,11 @@ public:
                   "Vectors implied by the thread map must be divisible by the "
                   "access type.");
     static_assert(
-            ThreadMap::Iterations::kStrided == 1 && kAccessesPerVector == 1 &&
-                    AccessSize == 1,
+            AccessSize == 1,
             "This tile iterator only support access 1 element per access");
 
-    static int const kAccessCount = ThreadMap::Iterations::kCount;
+    static int const kAccessCount =
+            ThreadMap::Iterations::kCount * ThreadMap::kElementsPerAccess;
 
     /// Fragment object to be loaded or stored
     using Fragment =
@@ -171,7 +171,7 @@ private:
     Index filter_r_[kAccessCount];
     Index filter_s_[kAccessCount];
 
-    Index filter_w_;
+    Index filter_w_[ThreadMap::Iterations::kStrided];
 
     Index conv_k_iterations_;
 
@@ -198,15 +198,26 @@ private:
 
     CUTLASS_DEVICE
     void initialize_filter_coordinates_(LogicalCoord const& thread_offset) {
-        auto grad = params_.tile_map_(thread_offset.row());
-        filter_w_ = grad.column();
         CUTLASS_PRAGMA_UNROLL
-        for (int c = 0; c < ThreadMap::Iterations::kContiguous; ++c) {
-            Index column =
-                    c * ThreadMap::Delta::kContiguous + thread_offset.column();
-            auto coord = params_.tile_map_(column, grad);
-            filter_r_[c] = coord.row();
-            filter_s_[c] = coord.column();
+        for (int s = 0; s < ThreadMap::Iterations::kStrided; ++s) {
+            auto grad = params_.tile_map_(thread_offset.row() +
+                                          s * ThreadMap::Delta::kStrided);
+            filter_w_[s] = grad.column();
+            CUTLASS_PRAGMA_UNROLL
+            for (int c = 0; c < ThreadMap::Iterations::kContiguous; ++c) {
+                CUTLASS_PRAGMA_UNROLL
+                for (int v = 0; v < kAccessesPerVector; ++v) {
+                    int idx = v +
+                              kAccessesPerVector *
+                                      (c +
+                                       s * ThreadMap::Iterations::kContiguous);
+                    Index column = v + c * ThreadMap::Delta::kContiguous +
+                                   thread_offset.column();
+                    auto coord = params_.tile_map_(column, grad);
+                    filter_r_[idx] = coord.row();
+                    filter_s_[idx] = coord.column();
+                }
+            }
         }
     }
 
@@ -269,17 +280,26 @@ public:
         if (is_residue_tile_) {
             increment = residue_offset_;
         }
-        auto inc_coord = params_.tile_map_(increment);
+        auto inc_coord_ = params_.tile_map_(increment);
 
-        filter_w_ += inc_coord.column();
-        if (filter_w_ >= params_.tile_map_.wo_) {
-            filter_w_ -= params_.tile_map_.wo_;
-            inc_coord += MatrixCoord{1, -params_.tile_map_.wo_};
-        }
         CUTLASS_PRAGMA_UNROLL
-        for (int i = 0; i < kAccessCount; ++i) {
-            filter_r_[i] -= inc_coord.row() * params_.tile_map_.sh_;
-            filter_s_[i] -= inc_coord.column() * params_.tile_map_.sw_;
+        for (int s = 0; s < ThreadMap::Iterations::kStrided; ++s) {
+            auto inc_coord = inc_coord_;
+            filter_w_[s] += inc_coord.column();
+            if (filter_w_[s] >= params_.tile_map_.wo_) {
+                filter_w_[s] -= params_.tile_map_.wo_;
+                inc_coord += MatrixCoord{1, -params_.tile_map_.wo_};
+            }
+            CUTLASS_PRAGMA_UNROLL
+            for (int i = 0;
+                 i < ThreadMap::Iterations::kContiguous * kAccessesPerVector;
+                 ++i) {
+                int idx = s * ThreadMap::Iterations::kContiguous *
+                                  kAccessesPerVector +
+                          i;
+                filter_r_[idx] -= inc_coord.row() * params_.tile_map_.sh_;
+                filter_s_[idx] -= inc_coord.column() * params_.tile_map_.sw_;
+            }
         }
         is_residue_tile_ = false;
         return *this;
@@ -321,23 +341,34 @@ public:
     void load_with_byte_offset(Fragment& frag, LongIndex byte_offset) {
         AccessType* frag_ptr = reinterpret_cast<AccessType*>(&frag);
         CUTLASS_PRAGMA_UNROLL
-        for (int c = 0; c < ThreadMap::Iterations::kContiguous; ++c) {
-            Index& filter_r = filter_r_[c];
-            Index& filter_s = filter_s_[c];
-            bool guard = filter_r >= 0 && filter_r < params_.fh_ &&
-                         filter_s >= 0 && filter_s < params_.fw_;
-            if (is_residue_tile_)
-                guard &= residue_extent_ > 0;
-            char const* byte_ptr =
-                    reinterpret_cast<char const*>(
-                            pointer_ + filter_r * params_.fw_ + filter_s) +
-                    byte_offset;
+        for (int s = 0; s < ThreadMap::Iterations::kStrided; ++s) {
+            CUTLASS_PRAGMA_UNROLL
+            for (int c = 0; c < ThreadMap::Iterations::kContiguous; ++c) {
+                CUTLASS_PRAGMA_UNROLL
+                for (int v = 0; v < kAccessesPerVector; ++v) {
+                    int idx = v +
+                              kAccessesPerVector *
+                                      (c +
+                                       s * ThreadMap::Iterations::kContiguous);
+                    Index& filter_r = filter_r_[idx];
+                    Index& filter_s = filter_s_[idx];
+                    bool guard = filter_r >= 0 && filter_r < params_.fh_ &&
+                                 filter_s >= 0 && filter_s < params_.fw_;
+                    if (is_residue_tile_)
+                        guard &= residue_extent_ > 0;
+                    char const* byte_ptr =
+                            reinterpret_cast<char const*>(
+                                    pointer_ + filter_r * params_.fw_ +
+                                    filter_s) +
+                            byte_offset;
 
-            AccessType const* access_ptr =
-                    reinterpret_cast<AccessType const*>(byte_ptr);
+                    AccessType const* access_ptr =
+                            reinterpret_cast<AccessType const*>(byte_ptr);
 
-            cutlass::arch::global_load<AccessType, sizeof(AccessType)>(
-                    frag_ptr[c], access_ptr, guard);
+                    cutlass::arch::global_load<AccessType, sizeof(AccessType)>(
+                            frag_ptr[idx], access_ptr, guard);
+                }
+            }
         }
     }
 
@@ -358,23 +389,34 @@ public:
     void store_with_byte_offset(Fragment const& frag, LongIndex byte_offset) {
         AccessType* frag_ptr = reinterpret_cast<AccessType*>(&frag);
         CUTLASS_PRAGMA_UNROLL
-        for (int c = 0; c < ThreadMap::Iterations::kContiguous; ++c) {
-            Index& filter_r = filter_r_[c];
-            Index& filter_s = filter_s_[c];
-            bool guard = filter_r >= 0 && filter_r < params_.fh_ &&
-                         filter_s >= 0 && filter_s < params_.fw_;
-            if (is_residue_tile_)
-                guard &= residue_extent_ > 0;
-            char const* byte_ptr =
-                    reinterpret_cast<char const*>(
-                            pointer_ + filter_r * params_.fw_ + filter_s) +
-                    byte_offset;
+        for (int s = 0; s < ThreadMap::Iterations::kStrided; ++s) {
+            CUTLASS_PRAGMA_UNROLL
+            for (int c = 0; c < ThreadMap::Iterations::kContiguous; ++c) {
+                CUTLASS_PRAGMA_UNROLL
+                for (int v = 0; v < kAccessesPerVector; ++v) {
+                    int idx = v +
+                              kAccessesPerVector *
+                                      (c +
+                                       s * ThreadMap::Iterations::kContiguous);
+                    Index& filter_r = filter_r_[idx];
+                    Index& filter_s = filter_s_[idx];
+                    bool guard = filter_r >= 0 && filter_r < params_.fh_ &&
+                                 filter_s >= 0 && filter_s < params_.fw_;
+                    if (is_residue_tile_)
+                        guard &= residue_extent_ > 0;
+                    char const* byte_ptr =
+                            reinterpret_cast<char const*>(
+                                    pointer_ + filter_r * params_.fw_ +
+                                    filter_s) +
+                            byte_offset;
 
-            AccessType const* access_ptr =
-                    reinterpret_cast<AccessType const*>(byte_ptr);
+                    AccessType const* access_ptr =
+                            reinterpret_cast<AccessType const*>(byte_ptr);
 
-            cutlass::arch::global_store<AccessType, sizeof(AccessType)>(
-                    frag_ptr[c], access_ptr, guard);
+                    cutlass::arch::global_store<AccessType, sizeof(AccessType)>(
+                            frag_ptr[idx], access_ptr, guard);
+                }
+            }
         }
     }
 

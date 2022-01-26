@@ -500,7 +500,8 @@ template <typename Shape_,     ///< Threadblock-scoped tile size (concept:
           typename Operator_,  /// Warp-scoped epilogue components (concept:
                                /// gemm::warp::Mma)
           typename Element_,   ///< Element data type
-          typename Layout_     ///< Tensor Layout
+          typename Layout_,    ///< Tensor Layout
+          typename Detail      ///< A detail structure to compute lane offset
           >
 class Dwconv2dPredicatedAccessTileIterator {
 public:
@@ -525,24 +526,6 @@ public:
     using ConvProblemSize = typename conv::Conv2dProblemSize;
 
     static int const kElementsPerAccess = 1;
-
-    using Policy = typename Operator::Policy;
-    /// Shape of the warp in lanes
-    using WarpShape = typename Policy::WarpShape;
-    /// Layout function of lanes
-    using LaneLayout = typename Policy::LaneLayout;
-    /// size of each lane's thread-level matrix product
-    using LaneMmaShape = typename Policy::LaneMmaShape;
-
-    /// Accumulator tile shape of each lane
-    using AccumulatorTileShape =
-            MatrixShape<Operator::Shape::kM / WarpShape::kRow,
-                        Operator::Shape::kN / WarpShape::kColumn>;
-
-    /// Number of mma operations performed
-    using MmaIterations =
-            MatrixShape<AccumulatorTileShape::kRow / LaneMmaShape::kM,
-                        AccumulatorTileShape::kColumn / LaneMmaShape::kN>;
 
     /// Number of warps spanning threadblock-scoped tile
     using WarpCount = gemm::GemmShape<Shape::kM / Operator::Shape::kM,
@@ -642,16 +625,15 @@ public:
         int warp_m = warp_mn % WarpCount::kM;
         int warp_n = warp_mn / WarpCount::kM;
 
-        auto lane_layout = Policy::get_lane_layout();
-        LogicalCoord lane_origin =
-                lane_layout.inverse(lane_idx) *
-                MatrixCoord(LaneMmaShape::kM, LaneMmaShape::kN);
+        LogicalCoord warp_offset = LogicalCoord{warp_m * Operator::Shape::kM,
+                                                warp_n * Operator::Shape::kN};
 
-        thread_origin_ = threadblock_offset +
-                         LogicalCoord{warp_m * Operator::Shape::kM,
-                                      warp_n * Operator::Shape::kN} +
-                         lane_origin;
+        LogicalCoord lane_offset = Detail::get_lane_offset(lane_idx);
+
+        thread_origin_ = threadblock_offset + warp_offset + lane_offset;
+
         extent_ = extent - thread_origin_;
+
         pointer_ = reinterpret_cast<BytePointer>(pointer);
     }
 

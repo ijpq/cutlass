@@ -365,13 +365,14 @@ struct Conv2dDgradTestbed {
         // Initialize the CONVOLUTION operator
         //
 
-        typename Convolution::Arguments arguments{conv_param,
-                                                  tensor_src.device_ref(),
-                                                  tensor_filter.device_ref(),
-                                                  tensor_bias.device_ref(),
-                                                  dummy,
-                                                  tensor_dst.device_ref(),
-                                                  {alpha, beta, 0}};
+        typename Convolution::Arguments arguments{
+                conv_param,
+                tensor_src.device_ref(),
+                tensor_filter.device_ref(),
+                tensor_bias.device_ref(),
+                dummy,
+                tensor_dst.device_ref(),
+                {alpha, beta, ElementCompute(0)}};
 
         Convolution conv_op;
 
