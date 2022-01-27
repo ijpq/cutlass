@@ -203,7 +203,7 @@ torch::Tensor forward_fp32(
     CHECK_INPUT(input);
     CHECK_INPUT(weight);
 
-    auto output = torch::zeros_like(input);
+    auto output = torch::empty_like(input);
 
     Options options = Options();
 

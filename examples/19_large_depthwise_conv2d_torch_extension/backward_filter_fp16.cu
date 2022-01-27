@@ -184,7 +184,7 @@ torch::Tensor backward_filter_fp16(torch::Tensor diff, torch::Tensor input,
     CHECK_INPUT(input);
     CHECK_INPUT(weight);
 
-    auto output = torch::zeros_like(weight);
+    auto output = torch::empty_like(weight, at::TensorOptions().dtype(at::kFloat));
 
     Options options = Options();
 

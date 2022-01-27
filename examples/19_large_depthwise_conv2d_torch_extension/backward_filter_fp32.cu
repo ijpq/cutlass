@@ -205,7 +205,7 @@ torch::Tensor backward_filter_fp32(
     CHECK_INPUT(input);
     CHECK_INPUT(weight);
 
-    auto output = torch::zeros_like(weight);
+    auto output = torch::empty_like(weight);
 
     Options options = Options();
 
