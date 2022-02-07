@@ -243,7 +243,7 @@ struct TileMap<layout::TensorNCHW, TileMapType::kRow2N_Col2HW> {
     using TensorCoord = typename Layout::TensorCoord;
     static const int kStrideAxis = 2;
     CUTLASS_HOST_DEVICE
-    TileMap() = default;
+    TileMap() {}
 };
 
 template <>

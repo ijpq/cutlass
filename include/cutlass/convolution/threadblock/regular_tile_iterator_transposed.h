@@ -189,8 +189,8 @@ public:
 
             CUTLASS_PRAGMA_UNROLL
             for (int c = 0; c < ThreadMap::Iterations::kContiguous; ++c) {
-                int idx = s * ThreadMap::Iterations::kContiguous + c;
-
+                int idx = c * ThreadMap::Iterations::kStrided + s;
+                
                 access_ptr[c * ThreadMap::Delta::kContiguous /
                            ThreadMap::kElementsPerAccess] = frag_ptr[idx];
             }
