@@ -3,9 +3,9 @@ Torch Extension for DepthwiseConv2d with Implicit GEMM
 
 ### Usage
 
-Compile and run on a worker with GPU:
+Compile and install `depthwise_conv2d_implicit_gemm`
 
 ```
-./depthwise_conv2d_implicit_gemm.py
+./setup.py install --user
 ```
 

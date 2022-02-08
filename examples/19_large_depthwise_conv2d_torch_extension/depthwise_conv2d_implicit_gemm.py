@@ -1,39 +1,14 @@
 #!/usr/bin/env python3
 import os
+
 import torch
 import torch.nn as nn
 import torch.utils.cpp_extension as cpp_extension
 
-CUTLASS_ROOT = os.path.join(os.path.dirname(__file__), "../..")
+import _depthwise_conv2d_implicit_gemm_C as _extension
 
-_extension = None
 
 __all__ = ["DepthWiseConv2dImplicitGEMM"]
-
-def _load_extension():
-    global _extension
-    if _extension is not None: return _extension
-    _extension = cpp_extension.load(
-        name="dwconv_implicitgemm",
-        sources=[
-            "frontend.cpp",
-            "forward_fp32.cu",
-            "backward_data_fp32.cu",
-            "backward_filter_fp32.cu",
-            "forward_fp16.cu",
-            "backward_data_fp16.cu",
-            "backward_filter_fp16.cu",
-        ],
-        extra_include_paths=[
-            ".",
-            os.path.join(CUTLASS_ROOT, "include"),
-            os.path.join(CUTLASS_ROOT, "tools", "library", "include"),
-            os.path.join(CUTLASS_ROOT, "tools", "util", "include"),
-            os.path.join(CUTLASS_ROOT, "examples", "common"),
-        ],
-        verbose=True
-    )
-    return _extension
 
 
 class _DepthWiseConv2dImplicitGEMMFP32(torch.autograd.Function):
@@ -71,7 +46,7 @@ class _DepthWiseConv2dImplicitGEMMFP16(torch.autograd.Function):
 class DepthWiseConv2dImplicitGEMM(nn.Conv2d):
     def __init__(self, channels, kernel, bias=False):
         super().__init__(channels, channels, kernel, groups=channels, bias=bias)
-        _load_extension()
+        # _load_extension()
 
     def forward(self, x):
         if x.dtype == torch.float32:
