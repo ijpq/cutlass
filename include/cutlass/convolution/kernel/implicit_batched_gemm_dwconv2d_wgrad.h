@@ -77,6 +77,8 @@ struct ImplicitBatchedGemmDepthwiseConvolution2dWgrad {
     using ThreadblockSwizzle = ThreadblockSwizzle_;
     using ConvProblemSize = ConvProblemSize_;
 
+    static Operator const kConvolutionalOperator = Operator::kWgrad;
+
     using ElementSrc = typename Mma::IteratorSrc::Element;
     using LayoutSrc = typename Mma::IteratorSrc::Layout;
     using ElementDiff = typename Mma::IteratorFilter::Element;

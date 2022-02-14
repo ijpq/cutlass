@@ -261,10 +261,10 @@ public:
         initialize_filter_coordinates_(thread_offset);
 
         residue_extent_ = residue_extent_ - thread_offset.row();
-    
+
         return *this;
     }
-    
+
     /// Adds a pointer offset in units of Element
     CUTLASS_HOST_DEVICE
     void add_pointer_offset(LongIndex pointer_offset) {
@@ -280,11 +280,11 @@ public:
         if (is_residue_tile_) {
             increment = residue_offset_;
         }
-        auto inc_coord_ = params_.tile_map_(increment);
+        auto inc_coord_base = params_.tile_map_(increment);
 
         CUTLASS_PRAGMA_UNROLL
         for (int s = 0; s < ThreadMap::Iterations::kStrided; ++s) {
-            auto inc_coord = inc_coord_;
+            auto inc_coord = inc_coord_base;
             filter_w_[s] += inc_coord.column();
             if (filter_w_[s] >= params_.tile_map_.wo_) {
                 filter_w_[s] -= params_.tile_map_.wo_;

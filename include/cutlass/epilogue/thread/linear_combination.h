@@ -35,6 +35,7 @@
 #include "cutlass/array.h"
 #include "cutlass/functional.h"
 #include "cutlass/numeric_conversion.h"
+#include "cutlass/epilogue/epilogue.h"
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -64,6 +65,8 @@ public:
     using ElementCompute = ElementCompute_;
 
     static int const kCount = Count;
+
+    static EpilogueType const kType = EpilogueType::kLinearCombination;
 
     using FragmentOutput = Array<ElementOutput, kCount>;
     using FragmentAccumulator = Array<ElementAccumulator, kCount>;

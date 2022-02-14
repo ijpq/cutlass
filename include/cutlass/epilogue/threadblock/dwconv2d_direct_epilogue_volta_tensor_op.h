@@ -140,12 +140,9 @@ public:
             MatrixShape<Operator::Shape::kM / InterleavedTileShape::kM,
                         Operator::Shape::kN / InterleavedTileShape::kN>;
 
-public:
     /// Shared storage allocation needed by the epilogue
     struct SharedStorage {};
 
-private:
-public:
     /// Constructor
     CUTLASS_DEVICE
     Dwconv2dWgradDirectEpilogueVoltaTensorOp(
