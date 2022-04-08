@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -36,6 +36,7 @@
 #include <assert.h>
 #endif
 
+#include "cutlass/cutlass.h"
 #include "mma.h"
 #include "cutlass/layout/matrix.h"
 #include "cutlass/numeric_types.h"
@@ -102,7 +103,13 @@ struct Mma<gemm::GemmShape<16, 8, 8>, 32, bfloat16_t, layout::RowMajor,
               "f"(C[3]));
 
 #else
-        assert(0);
+
+        CUTLASS_UNUSED(d);
+        CUTLASS_UNUSED(a);
+        CUTLASS_UNUSED(b);
+        CUTLASS_UNUSED(c);
+        CUTLASS_NOT_IMPLEMENTED();
+
 #endif
     }
 };
@@ -153,7 +160,13 @@ struct Mma<gemm::GemmShape<16, 8, 4>, 32, tfloat32_t, layout::RowMajor,
                   "f"(C[2]), "f"(C[3]));
 
 #else
-        assert(0);
+
+        CUTLASS_UNUSED(d);
+        CUTLASS_UNUSED(a);
+        CUTLASS_UNUSED(b);
+        CUTLASS_UNUSED(c);
+        CUTLASS_NOT_IMPLEMENTED();
+
 #endif
     }
 };
@@ -204,7 +217,13 @@ struct Mma<gemm::GemmShape<16, 8, 8>, 32, tfloat32_t, layout::RowMajor,
                   "r"(B[1]), "f"(C[0]), "f"(C[1]), "f"(C[2]), "f"(C[3]));
 
 #else
-        assert(0);
+
+        CUTLASS_UNUSED(d);
+        CUTLASS_UNUSED(a);
+        CUTLASS_UNUSED(b);
+        CUTLASS_UNUSED(c);
+        CUTLASS_NOT_IMPLEMENTED();
+
 #endif
     }
 };
@@ -255,7 +274,13 @@ struct Mma<gemm::GemmShape<16, 8, 16>, 32, half_t, layout::RowMajor, half_t,
                   "r"(B[1]), "r"(C[0]), "r"(C[1]));
 
 #else
-        assert(0);
+
+        CUTLASS_UNUSED(d);
+        CUTLASS_UNUSED(a);
+        CUTLASS_UNUSED(b);
+        CUTLASS_UNUSED(c);
+        CUTLASS_NOT_IMPLEMENTED();
+
 #endif
     }
 };
@@ -303,7 +328,13 @@ struct Mma<gemm::GemmShape<16, 8, 16>, 32, bfloat16_t, layout::RowMajor,
                   "r"(B[1]), "f"(C[0]), "f"(C[1]), "f"(C[2]), "f"(C[3]));
 
 #else
-        assert(0);
+
+        CUTLASS_UNUSED(d);
+        CUTLASS_UNUSED(a);
+        CUTLASS_UNUSED(b);
+        CUTLASS_UNUSED(c);
+        CUTLASS_NOT_IMPLEMENTED();
+
 #endif
     }
 };
@@ -351,7 +382,13 @@ struct Mma<gemm::GemmShape<16, 8, 16>, 32, half_t, layout::RowMajor, half_t,
                   "r"(B[1]), "f"(C[0]), "f"(C[1]), "f"(C[2]), "f"(C[3]));
 
 #else
-        assert(0);
+
+        CUTLASS_UNUSED(d);
+        CUTLASS_UNUSED(a);
+        CUTLASS_UNUSED(b);
+        CUTLASS_UNUSED(c);
+        CUTLASS_NOT_IMPLEMENTED();
+
 #endif
     }
 };
@@ -402,7 +439,13 @@ struct Mma<gemm::GemmShape<8, 8, 4>, 32, double, layout::RowMajor, double,
                 : "d"(A), "d"(B), "d"(C[0]), "d"(C[1]));
 
 #else
-        assert(0);
+
+        CUTLASS_UNUSED(d);
+        CUTLASS_UNUSED(a);
+        CUTLASS_UNUSED(b);
+        CUTLASS_UNUSED(c);
+        CUTLASS_NOT_IMPLEMENTED();
+
 #endif
     }
 };
@@ -1666,7 +1709,6 @@ struct Mma<gemm::GemmShape<16, 8, 256>, 32, cutlass::uint1b_t, layout::RowMajor,
 
         int const* C = reinterpret_cast<int const*>(&c);
         int* D = reinterpret_cast<int*>(&d);
-
         asm volatile(
                 "mma.sync.aligned.m16n8k256.row.col.s32.b1.b1.s32.xor.popc "
                 "{%0,%1,%2,%3}, "
@@ -1677,8 +1719,10 @@ struct Mma<gemm::GemmShape<16, 8, 256>, 32, cutlass::uint1b_t, layout::RowMajor,
                   "r"(B[1]), "r"(C[0]), "r"(C[1]), "r"(C[2]), "r"(C[3]));
 
 #else
+
         assert(0);
-#endif
+
+#endif  // defined(CUTLASS_ARCH_MMA_SM80_ENABLED)
     }
 };
 

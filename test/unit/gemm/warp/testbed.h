@@ -1,27 +1,25 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- *modification, are permitted provided that the following conditions are met:
- *     * Redistributions of source code must retain the above copyright notice,
- *this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *notice, this list of conditions and the following disclaimer in the
- *documentation and/or other materials provided with the distribution.
- *     * Neither the name of the NVIDIA CORPORATION nor the names of its
- *contributors may be used to endorse or promote products derived from this
- *software without specific prior written permission.
+ * Redistribution and use in source and binary forms, with or without modification, are permitted
+ * provided that the following conditions are met:
+ *     * Redistributions of source code must retain the above copyright notice, this list of
+ *       conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above copyright notice, this list of
+ *       conditions and the following disclaimer in the documentation and/or other materials
+ *       provided with the distribution.
+ *     * Neither the name of the NVIDIA CORPORATION nor the names of its contributors may be used
+ *       to endorse or promote products derived from this software without specific prior written
+ *       permission.
  *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- *AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- *IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- *DISCLAIMED. IN NO EVENT SHALL NVIDIA CORPORATION BE LIABLE FOR ANY DIRECT,
- *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
- * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
- *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
- *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL NVIDIA CORPORATION BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  **************************************************************************************************/
 /*! \file
@@ -35,6 +33,7 @@
 #include "cutlass/numeric_types.h"
 #include "cutlass/subbyte_reference.h"
 #include "cutlass/platform/platform.h"
+#include "cutlass/arch/arch.h"
 
 #include "cutlass/util/host_tensor.h"
 #include "cutlass/util/tensor_view_io.h"
@@ -113,10 +112,10 @@ __global__ void kernel(typename Mma::ElementC* output_C,
             Mma::LayoutC::packed({Mma::Shape::kM, Mma::Shape::kN});
 
     typename Mma::IteratorA iter_A({smem_buffer_A.data(), layout_A},
-                                   cutlass::LaneId());
+                                   cutlass::arch::LaneId());
 
     typename Mma::IteratorB iter_B({smem_buffer_B.data(), layout_B},
-                                   cutlass::LaneId());
+                                   cutlass::arch::LaneId());
 
     FragmentA frag_A;
     FragmentB frag_B;
@@ -144,7 +143,8 @@ __global__ void kernel(typename Mma::ElementC* output_C,
         }
     }
 
-    typename Mma::IteratorC iter_C({output_C, layout_C}, cutlass::LaneId());
+    typename Mma::IteratorC iter_C({output_C, layout_C},
+                                   cutlass::arch::LaneId());
 
     iter_C.store(accum);
 }
@@ -157,7 +157,7 @@ template <
         typename Mma_,
         /// Size of threadblock-scoped shape used to store SMEM
         typename ThreadblockShape_,
-        /// The innter product operation performed by GEMM
+        /// The inner product operation performed by GEMM
         typename Operator_ = cutlass::arch::OpMultiplyAdd>
 struct Testbed {
     /// Thread-level matrix multiply-accumulate operator
@@ -311,18 +311,18 @@ struct Testbed {
 
         if (!passed) {
             cutlass::TensorView<ElementA, cutlass::layout::ColumnMajor>
-                    tensor_A_physical(tensor_A.host_data(), tensor_A.stride(),
-                                      tensor_A.extent());
+                    tensor_A_physical(tensor_A.host_data(),
+                                      tensor_A.stride()[0], tensor_A.extent());
 
             cutlass::TensorView<ElementB, cutlass::layout::RowMajor>
-                    tensor_B_physical(tensor_B.host_data(), tensor_B.stride(),
-                                      tensor_B.extent());
+                    tensor_B_physical(tensor_B.host_data(),
+                                      tensor_B.stride()[0], tensor_B.extent());
 
             std::cout << "cutlass::sizeof_bits<ElementA>::value = "
                       << cutlass::sizeof_bits<ElementA>::value << "\n";
             std::cout << "A:\n"
                       << tensor_A.host_view() << "\n\n"
-                      << "A(physical - stride: " << tensor_A.stride()
+                      << "A(physical - stride: " << tensor_A.stride()[0]
                       << ", extent: " << tensor_A.extent() << "):\n"
                       << tensor_A_physical << "\n\n";
 
@@ -330,7 +330,7 @@ struct Testbed {
                       << cutlass::sizeof_bits<ElementB>::value << "\n";
             std::cout << "B:\n"
                       << tensor_B.host_view() << "\n\n"
-                      << "B(physical - stride: " << tensor_B.stride()
+                      << "B(physical - stride: " << tensor_B.stride()[0]
                       << ", extent: " << tensor_B.extent() << "):\n"
                       << tensor_B_physical << "\n\n";
 
@@ -480,18 +480,18 @@ struct TestbedComplex {
 
         if (!passed) {
             cutlass::TensorView<ElementA, cutlass::layout::ColumnMajor>
-                    tensor_A_physical(tensor_A.host_data(), tensor_A.stride(),
-                                      tensor_A.extent());
+                    tensor_A_physical(tensor_A.host_data(),
+                                      tensor_A.stride()[0], tensor_A.extent());
 
             cutlass::TensorView<ElementB, cutlass::layout::RowMajor>
-                    tensor_B_physical(tensor_B.host_data(), tensor_B.stride(),
-                                      tensor_B.extent());
+                    tensor_B_physical(tensor_B.host_data(),
+                                      tensor_B.stride()[0], tensor_B.extent());
 
             std::cout << "cutlass::sizeof_bits<ElementA>::value = "
                       << cutlass::sizeof_bits<ElementA>::value << "\n";
             std::cout << "A:\n"
                       << tensor_A.host_view() << "\n\n"
-                      << "A(physical - stride: " << tensor_A.stride()
+                      << "A(physical - stride: " << tensor_A.stride()[0]
                       << ", extent: " << tensor_A.extent() << "):\n"
                       << tensor_A_physical << "\n\n";
 
@@ -499,7 +499,7 @@ struct TestbedComplex {
                       << cutlass::sizeof_bits<ElementB>::value << "\n";
             std::cout << "B:\n"
                       << tensor_B.host_view() << "\n\n"
-                      << "B(physical - stride: " << tensor_B.stride()
+                      << "B(physical - stride: " << tensor_B.stride()[0]
                       << ", extent: " << tensor_B.extent() << "):\n"
                       << tensor_B_physical << "\n\n";
 
@@ -579,10 +579,10 @@ __global__ void kernel_transform(typename Mma::ElementC* output_C,
             Mma::LayoutC::packed({Mma::Shape::kM, Mma::Shape::kN});
 
     typename Mma::IteratorA iter_A({smem_buffer_A.data(), layout_A},
-                                   cutlass::LaneId());
+                                   cutlass::arch::LaneId());
 
     typename Mma::IteratorB iter_B({smem_buffer_B.data(), layout_B},
-                                   cutlass::LaneId());
+                                   cutlass::arch::LaneId());
 
     FragmentA loaded_frag_A;
     FragmentB loaded_frag_B;
@@ -615,7 +615,8 @@ __global__ void kernel_transform(typename Mma::ElementC* output_C,
         }
     }
 
-    typename Mma::IteratorC iter_C({output_C, layout_C}, cutlass::LaneId());
+    typename Mma::IteratorC iter_C({output_C, layout_C},
+                                   cutlass::arch::LaneId());
 
     iter_C.store(accum);
 }
@@ -782,18 +783,18 @@ struct TransformTestbed {
 
         if (!passed) {
             cutlass::TensorView<ElementA, cutlass::layout::ColumnMajor>
-                    tensor_A_physical(tensor_A.host_data(), tensor_A.stride(),
-                                      tensor_A.extent());
+                    tensor_A_physical(tensor_A.host_data(),
+                                      tensor_A.stride()[0], tensor_A.extent());
 
             cutlass::TensorView<ElementB, cutlass::layout::RowMajor>
-                    tensor_B_physical(tensor_B.host_data(), tensor_B.stride(),
-                                      tensor_B.extent());
+                    tensor_B_physical(tensor_B.host_data(),
+                                      tensor_B.stride()[0], tensor_B.extent());
 
             std::cout << "cutlass::sizeof_bits<ElementA>::value = "
                       << cutlass::sizeof_bits<ElementA>::value << "\n";
             std::cout << "A:\n"
                       << tensor_A.host_view() << "\n\n"
-                      << "A(physical - stride: " << tensor_A.stride()
+                      << "A(physical - stride: " << tensor_A.stride()[0]
                       << ", extent: " << tensor_A.extent() << "):\n"
                       << tensor_A_physical << "\n\n";
 
@@ -801,7 +802,7 @@ struct TransformTestbed {
                       << cutlass::sizeof_bits<ElementB>::value << "\n";
             std::cout << "B:\n"
                       << tensor_B.host_view() << "\n\n"
-                      << "B(physical - stride: " << tensor_B.stride()
+                      << "B(physical - stride: " << tensor_B.stride()[0]
                       << ", extent: " << tensor_B.extent() << "):\n"
                       << tensor_B_physical << "\n\n";
 
@@ -951,18 +952,18 @@ struct TransformedTestbedComplex {
 
         if (!passed) {
             cutlass::TensorView<ElementA, cutlass::layout::ColumnMajor>
-                    tensor_A_physical(tensor_A.host_data(), tensor_A.stride(),
-                                      tensor_A.extent());
+                    tensor_A_physical(tensor_A.host_data(),
+                                      tensor_A.stride()[0], tensor_A.extent());
 
             cutlass::TensorView<ElementB, cutlass::layout::RowMajor>
-                    tensor_B_physical(tensor_B.host_data(), tensor_B.stride(),
-                                      tensor_B.extent());
+                    tensor_B_physical(tensor_B.host_data(),
+                                      tensor_B.stride()[0], tensor_B.extent());
 
             std::cout << "cutlass::sizeof_bits<ElementA>::value = "
                       << cutlass::sizeof_bits<ElementA>::value << "\n";
             std::cout << "A:\n"
                       << tensor_A.host_view() << "\n\n"
-                      << "A(physical - stride: " << tensor_A.stride()
+                      << "A(physical - stride: " << tensor_A.stride()[0]
                       << ", extent: " << tensor_A.extent() << "):\n"
                       << tensor_A_physical << "\n\n";
 
@@ -970,7 +971,7 @@ struct TransformedTestbedComplex {
                       << cutlass::sizeof_bits<ElementB>::value << "\n";
             std::cout << "B:\n"
                       << tensor_B.host_view() << "\n\n"
-                      << "B(physical - stride: " << tensor_B.stride()
+                      << "B(physical - stride: " << tensor_B.stride()[0]
                       << ", extent: " << tensor_B.extent() << "):\n"
                       << tensor_B_physical << "\n\n";
 
@@ -1073,13 +1074,13 @@ __global__ void sparse_kernel(typename Mma::ElementC* output_C,
                      Mma::kInterleaved});
 
     typename Mma::IteratorA iter_A({smem_buffer_A.data(), layout_A},
-                                   cutlass::LaneId());
+                                   cutlass::arch::LaneId());
 
     typename Mma::IteratorB iter_B({smem_buffer_B.data(), layout_B},
-                                   cutlass::LaneId());
+                                   cutlass::arch::LaneId());
 
     typename Mma::IteratorE iter_E({smem_buffer_E.data(), layout_E},
-                                   cutlass::LaneId());
+                                   cutlass::arch::LaneId());
 
     FragmentA frag_A;
     FragmentB frag_B;
@@ -1111,7 +1112,8 @@ __global__ void sparse_kernel(typename Mma::ElementC* output_C,
         }
     }
 
-    typename Mma::IteratorC iter_C({output_C, layout_C}, cutlass::LaneId());
+    typename Mma::IteratorC iter_C({output_C, layout_C},
+                                   cutlass::arch::LaneId());
 
     iter_C.store(accum);
 }

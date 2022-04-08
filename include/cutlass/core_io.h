@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -36,6 +36,8 @@
 #include "cutlass/array.h"
 #include "cutlass/coord.h"
 #include "cutlass/numeric_types.h"
+#include "cutlass/matrix.h"
+#include "cutlass/quaternion.h"
 #include "cutlass/matrix_shape.h"
 #include "cutlass/layout/pitch_linear.h"
 #include "cutlass/tensor_view.h"
@@ -147,6 +149,43 @@ inline std::ostream& operator<<(std::ostream& out,
     return out;
 }
 
+/// Prints matrix to ostream
+template <typename Element, int Rows, int Columns>
+std::ostream& operator<<(std::ostream& out,
+                         Matrix<Element, Rows, Columns> const& rhs) {
+    for (int i = 0; i < Rows; ++i) {
+        for (int j = 0; j < Columns; ++j) {
+            ScalarIO<Element> element(rhs.at(i, j));
+            out << (j ? ", " : "") << element;
+        }
+        out << "\\n";
+    }
+
+    return out;
+}
+
+template <typename T>
+std::ostream& operator<<(std::ostream& out, Quaternion<T> const& rhs) {
+    out << ScalarIO<T>(rhs.w()) << " ";
+    if (rhs.x() >= 0) {
+        out << "+";
+    }
+
+    out << ScalarIO<T>(rhs.x()) << "*i ";
+    if (rhs.y() >= 0) {
+        out << "+";
+    }
+
+    out << ScalarIO<T>(rhs.y()) << "*j ";
+    if (rhs.z() >= 0) {
+        out << "+";
+    }
+
+    out << ScalarIO<T>(rhs.z()) << "*k";
+
+    return out;
+}
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 //                         stream operators for cutlass::gemm namespace //
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -166,7 +205,7 @@ inline std::ostream& operator<<(std::ostream& out,
 /// Default printing to ostream for GemmCoord
 inline std::ostream& operator<<(std::ostream& out,
                                 GemmCoord const& gemm_coord) {
-    out << "cutlass::gemm::GemmCoord:: {" << gemm_coord.m() << ","
+    out << "cutlass::gemm::GemmCoord {" << gemm_coord.m() << ","
         << gemm_coord.n() << "," << gemm_coord.k() << "}";
     return out;
 }
@@ -184,7 +223,7 @@ template <int Contiguous, int Strided>
 inline std::ostream& operator<<(
         std::ostream& out,
         PitchLinearShape<Contiguous, Strided> const& pitch_linear_shape) {
-    out << "cutlass::layout::PitchLinearShape::(kContiguous, kStrided) {"
+    out << "cutlass::layout::PitchLinearShape:(kContiguous, kStrided) {"
         << cutlass::layout::PitchLinearShape<Contiguous, Strided>::kContiguous
         << ","
         << cutlass::layout::PitchLinearShape<Contiguous, Strided>::kStrided

@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -57,6 +57,7 @@
 
 #include "cutlass/epilogue/threadblock/epilogue_base.h"
 #include "cutlass/epilogue/threadblock/predicated_tile_iterator.h"
+ #include "cutlass/util/index_sequence.h"
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -66,7 +67,7 @@ namespace threadblock {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Epilogue operator without splitk
+/// Epilogue operator
 template <typename Shape_,  ///< Shape of threadblock tile (concept: GemmShape)
           typename WarpMmaOperator_,  ///< Warp-level MMA operator (concept:
                                       ///< gemm::warp::MmaTensorOp)
@@ -80,16 +81,22 @@ template <typename Shape_,  ///< Shape of threadblock tile (concept: GemmShape)
           typename SharedLoadIterator_,  ///< Threadblock-scoped tile iterator
                                          ///< loading from SMEM
           typename OutputOp_,            ///< Output operator
-          typename Padding_  ///< Padding added to SMEM allocation to avoid bank
-                             ///< conflicts (concept: MatrixShape)
-          >
+          typename Padding_,  ///< Padding added to SMEM allocation to avoid
+                              ///< bank conflicts (concept: MatrixShape)
+          int FragmentsPerPartition =
+                  1,              ///< Used to coarsten the epilogue granularity
+          int IterationsUnroll =  ///< Used to reduce binary size when epilogue
+                                  ///< op is large
+          (!IsEpilogueFunctorHeavy<OutputOp_>::value)>
 class Epilogue : public EpilogueBase<Shape_, typename WarpMmaOperator_::Shape,
                                      PartitionsK, AccumulatorFragmentIterator_,
-                                     WarpTileIterator_, Padding_> {
+                                     WarpTileIterator_, Padding_,
+                                     FragmentsPerPartition> {
 public:
-    using Base = EpilogueBase<Shape_, typename WarpMmaOperator_::Shape,
-                              PartitionsK, AccumulatorFragmentIterator_,
-                              WarpTileIterator_, Padding_>;
+    using Base =
+            EpilogueBase<Shape_, typename WarpMmaOperator_::Shape, PartitionsK,
+                         AccumulatorFragmentIterator_, WarpTileIterator_,
+                         Padding_, FragmentsPerPartition>;
 
     using Shape = Shape_;
     using WarpMmaOperator = WarpMmaOperator_;
@@ -138,6 +145,12 @@ public:
 
     /// Number of warps
     using WarpCount = typename Base::WarpCount;
+
+    static int constexpr kSmemTiles = Base::kFragmentsPerIteration > 1
+                                              ? Base::kFragmentsPerIteration
+                                              : kPartitionsK;
+    static int constexpr kSmemPointerOffset =
+            Base::SharedStorage::StorageShape::kCount / kSmemTiles;
 
 public:
     static_assert(
@@ -190,6 +203,53 @@ public:
     }
 
 private:
+    template <class Seq>
+    struct acc2smem_source_not_needed;
+
+    template <size_t... Seq>
+    struct acc2smem_source_not_needed<cutlass::index_sequence<Seq...>> {
+        template <int Advance>
+        CUTLASS_DEVICE static void helper(
+                AccumulatorFragmentIterator accum_fragment_iterator,
+                WarpTileIterator& warp_tile_iterator) {
+            CUTLASS_PRAGMA_UNROLL
+            for (int i = 0; i < Advance; i++) {
+                ++accum_fragment_iterator;
+            }
+
+            CUTLASS_PRAGMA_UNROLL
+            for (int p = 0; p < Base::kFragmentsPerIteration; ++p) {
+                typename AccumulatorFragmentIterator::Fragment accum_fragment;
+
+                accum_fragment_iterator.load(accum_fragment);
+                ++accum_fragment_iterator;
+
+                warp_tile_iterator.store(accum_fragment);
+                if (p < Base::kFragmentsPerIteration - 1) {
+                    warp_tile_iterator.add_pointer_offset(kSmemPointerOffset);
+                }
+            }
+
+            if (Base::kFragmentsPerIteration > 1) {
+                warp_tile_iterator.add_pointer_offset(
+                        kSmemPointerOffset *
+                        (1 - Base::kFragmentsPerIteration));
+            }
+        }
+
+        CUTLASS_DEVICE
+        static void push(size_t pos,
+                         AccumulatorFragmentIterator const& iterator_begin,
+                         WarpTileIterator& warp_tile_iterator) {
+            int dummy[] = {(pos == (Seq * Base::kFragmentsPerIteration)) &&
+                           (helper<Seq * Base::kFragmentsPerIteration>(
+                                    iterator_begin, warp_tile_iterator),
+                            0)...};
+
+            CUTLASS_UNUSED(dummy[0]);
+        }
+    };
+
     /// Streams the result to global memory
     CUTLASS_DEVICE
     void compute_source_not_needed_(
@@ -272,6 +332,35 @@ private:
             ++destination_iterator;
         }
     }
+
+    template <class Seq>
+    struct acc2smem_source_needed;
+
+    template <size_t... Seq>
+    struct acc2smem_source_needed<cutlass::index_sequence<Seq...>> {
+        template <int Advance>
+        CUTLASS_DEVICE static void helper(
+                AccumulatorFragmentIterator accum_fragment_iterator,
+                WarpTileIterator& warp_tile_iterator) {
+            CUTLASS_PRAGMA_UNROLL
+            for (int i = 0; i < Advance; i++) {
+                ++accum_fragment_iterator;
+            }
+
+            typename AccumulatorFragmentIterator::Fragment accum_fragment;
+            accum_fragment_iterator.load(accum_fragment);
+            warp_tile_iterator.store(accum_fragment);
+        }
+
+        CUTLASS_DEVICE
+        static void push(size_t pos,
+                         AccumulatorFragmentIterator const& iterator_begin,
+                         WarpTileIterator& warp_tile_iterator) {
+            int dummy[] = {
+                    (pos == Seq) &&
+                    (helper<Seq>(iterator_begin, warp_tile_iterator), 0)...};
+        }
+    };
 
     /// Streams the result to global memory
     CUTLASS_DEVICE

@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -52,6 +52,19 @@ struct global_load;
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
+#if (((__CUDACC_VER_MAJOR__ == 11) && (__CUDACC_VER_MINOR__ >= 4)) || \
+     (__CUDACC_VER_MAJOR__ > 11)) &&                                  \
+        defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 750) &&           \
+        !(defined(__clang__) && defined(__CUDA__))
+#define CUTLASS_ENABLE_L2_PREFETCH 1
+#else
+#define CUTLASS_ENABLE_L2_PREFETCH 0
+#endif
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
+// The redundant mov PTX instruction is used to enforce the compiler to
+// initialize data to zero before ld.global
 template <typename AccessType>
 struct global_load<AccessType, 64> {
     CUTLASS_DEVICE

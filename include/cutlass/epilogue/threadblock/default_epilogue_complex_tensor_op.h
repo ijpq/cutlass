@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -42,6 +42,11 @@
 #include "cutlass/gemm/gemm.h"
 
 #include "cutlass/epilogue/thread/linear_combination.h"
+#include "cutlass/epilogue/thread/linear_combination_relu.h"
+#include "cutlass/epilogue/thread/linear_combination_gelu.h"
+#include "cutlass/epilogue/thread/linear_combination_sigmoid.h"
+#include "cutlass/epilogue/thread/linear_combination_planar_complex.h"
+
 #include "cutlass/epilogue/thread/conversion_op.h"
 #include "cutlass/epilogue/thread/reduction_op.h"
 
@@ -92,6 +97,7 @@ struct DefaultEpilogueComplexTensorOp {
     using OutputOp = OutputOp_;
     static int const kElementsPerAccess = ElementsPerAccess;
     using Operator = Operator_;
+
     using ElementOutput = typename OutputOp::ElementOutput;
     using LayoutC = typename WarpMmaTensorOp::LayoutC;
     using ElementAccumulator = typename WarpMmaTensorOp::ElementC;
@@ -158,6 +164,7 @@ struct DefaultEpilogueComplexTensorOp<Shape_, WarpMmaTensorOp_, PartitionsK,
     using OutputOp = OutputOp_;
     static int const kElementsPerAccess = ElementsPerAccess;
     using Operator = arch::OpMultiplyAddGaussianComplex;
+
     using ElementOutput = typename OutputOp::ElementOutput;
     using LayoutC = typename WarpMmaTensorOp::LayoutC;
     using ElementAccumulator = typename WarpMmaTensorOp::ElementC;

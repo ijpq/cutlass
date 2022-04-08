@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -64,6 +64,7 @@ struct GemmSplitKParallel {
     struct Params {
         cutlass::gemm::GemmCoord problem_size;
         cutlass::gemm::GemmCoord grid_tiled_shape;
+        int swizzle_log_tile;
         typename Mma::IteratorA::Params params_A;
         typename Mma::IteratorA::TensorRef ref_A;
         typename Mma::IteratorB::Params params_B;
@@ -79,7 +80,7 @@ struct GemmSplitKParallel {
         //
 
         CUTLASS_HOST_DEVICE
-        Params() {}
+        Params() : swizzle_log_tile(0) {}
 
         CUTLASS_HOST_DEVICE
         Params(cutlass::gemm::GemmCoord const& problem_size,
@@ -90,6 +91,8 @@ struct GemmSplitKParallel {
                typename OutputOp::Params output_op, int64_t splitk_slice_stride)
                 : problem_size(problem_size),
                   grid_tiled_shape(grid_tiled_shape),
+                  swizzle_log_tile(
+                          ThreadblockSwizzle().get_log_tile(grid_tiled_shape)),
                   params_A(ref_A.layout()),
                   ref_A(ref_A),
                   params_B(ref_B.layout()),
@@ -126,7 +129,7 @@ struct GemmSplitKParallel {
         ThreadblockSwizzle threadblock_swizzle;
 
         cutlass::gemm::GemmCoord threadblock_tile_offset =
-                threadblock_swizzle.get_tile_offset(params.grid_tiled_shape);
+                threadblock_swizzle.get_tile_offset(params.swizzle_log_tile);
 
         // Early exit if CTA is out of range
         if (params.grid_tiled_shape.m() <= threadblock_tile_offset.m() ||
@@ -200,7 +203,7 @@ struct GemmSplitKParallel {
         //
 
         threadblock_tile_offset =
-                threadblock_swizzle.get_tile_offset(params.grid_tiled_shape);
+                threadblock_swizzle.get_tile_offset(params.swizzle_log_tile);
 
         // assume identity swizzle
         MatrixCoord threadblock_offset(

@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -1618,6 +1618,10 @@ struct DefaultMmaCore<Shape_, WarpShape_, InstructionShape_, ElementA_,
     static const int numElementsB = 128 / sizeof_bits<ElementB>::value;
     static const int LaneM = cutlass::const_min(numElementsA, ThreadTileM);
     static const int LaneN = cutlass::const_min(numElementsB, ThreadTileN);
+
+    static_assert(!((Shape::kK / 32) % LaneN),
+                  "Padding must be divisible by Lane");
+
     // these should have max of thread tile also
     using LaneMmaShape = cutlass::gemm::GemmShape<LaneM, LaneN, 1>;
     using Policy = cutlass::gemm::warp::MmaSimtPolicy<
@@ -1918,6 +1922,10 @@ struct DefaultMmaCore<Shape_, WarpShape_, InstructionShape_, ElementA_,
     static const int numElementsB = 128 / sizeof_bits<ElementB>::value;
     static const int LaneM = cutlass::const_min(numElementsA, ThreadTileM);
     static const int LaneN = cutlass::const_min(numElementsB, ThreadTileN);
+
+    static_assert(!((Shape::kK / 32) % LaneM) && !((Shape::kK / 32) % LaneN),
+                  "Padding must be divisible by Lane");
+
     // these should have max of thread tile also
     using LaneMmaShape = cutlass::gemm::GemmShape<LaneM, LaneN, 1>;
     using Policy = cutlass::gemm::warp::MmaSimtPolicy<
@@ -2068,6 +2076,10 @@ struct DefaultMmaCore<Shape_, WarpShape_, InstructionShape_, ElementA_,
     static const int numElementsB = 128 / sizeof_bits<ElementB>::value;
     static const int LaneM = cutlass::const_min(numElementsA, ThreadTileM);
     static const int LaneN = cutlass::const_min(numElementsB, ThreadTileN);
+
+    static_assert(!((Shape::kK / 32) % LaneM),
+                  "Padding must be divisible by Lane");
+
     // these should have max of thread tile also
     using LaneMmaShape = cutlass::gemm::GemmShape<LaneM, LaneN, 1>;
     using Policy = cutlass::gemm::warp::MmaSimtPolicy<

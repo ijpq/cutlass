@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -35,6 +35,7 @@
 #include "cutlass/array.h"
 #include "cutlass/functional.h"
 #include "cutlass/numeric_conversion.h"
+#include "cutlass/epilogue/thread/scale_type.h"
 #include "cutlass/epilogue/epilogue.h"
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -51,12 +52,17 @@ namespace thread {
 ///
 template <typename ElementOutput_,  ///< Data type used to load and store
                                     ///< tensors
-          int Count,  ///< Number of elements computed per operation
+          int Count,  ///< Number of elements computed per operation.
+                      ///< Usually it is 128/sizeof_bits<ElementOutput_>,
+                      ///< but we use 64 or 32 sometimes when there are not
+                      ///< enough data to store
           typename ElementAccumulator_ =
                   ElementOutput_,  ///< Accumulator data type
           typename ElementCompute_ =
                   ElementOutput_,  ///< Data type used to compute linear
                                    ///< combination
+          ScaleType::Kind Scale =
+                  ScaleType::Default,  ///< Control Alpha and Beta scaling
           FloatRoundStyle Round = FloatRoundStyle::round_to_nearest>
 class LinearCombination {
 public:
@@ -136,7 +142,18 @@ public:
 
     /// Returns true if source is needed
     CUTLASS_HOST_DEVICE
-    bool is_source_needed() const { return beta_ != ElementCompute(0); }
+    bool is_source_needed() const {
+        if (Scale == ScaleType::NoBetaScaling)
+            return true;
+
+        if (Scale == ScaleType::OnlyAlphaScaling)
+            return false;
+
+        if (Scale == ScaleType::Nothing)
+            return false;
+
+        return beta_ != ElementCompute(0);
+    }
 
     /// Functionally required for serial reduction in the epilogue
     CUTLASS_HOST_DEVICE
@@ -156,26 +173,32 @@ public:
         NumericArrayConverter<ElementCompute, ElementAccumulator, kCount, Round>
                 accumulator_converter;
 
+        // Convert to destination numeric type
+        NumericArrayConverter<ElementOutput, ElementCompute, kCount, Round>
+                destination_converter;
+
         ComputeFragment converted_source = source_converter(source);
         ComputeFragment converted_accumulator =
                 accumulator_converter(accumulator);
 
-        // Perform binary operations
+        if (Scale == ScaleType::Nothing)
+            return destination_converter(converted_accumulator);
 
+        // Perform binary operations
         ComputeFragment intermediate;
 
         multiplies<ComputeFragment> mul_add_source;
         multiply_add<ComputeFragment> mul_add_accumulator;
 
-        intermediate = mul_add_source(
-                beta_, converted_source);  // X =  beta * C + uniform
+        if (Scale == ScaleType::NoBetaScaling)
+            intermediate = converted_source;
+        else
+            intermediate = mul_add_source(
+                    beta_, converted_source);  // X =  beta * C + uniform
+
         intermediate =
                 mul_add_accumulator(alpha_, converted_accumulator,
                                     intermediate);  // D = alpha * Accum + X
-
-        // Convert to destination numeric type
-        NumericArrayConverter<ElementOutput, ElementCompute, kCount, Round>
-                destination_converter;
 
         return destination_converter(intermediate);
     }
@@ -187,8 +210,15 @@ public:
         NumericArrayConverter<ElementCompute, ElementAccumulator, kCount, Round>
                 accumulator_converter;
 
+        // Convert to destination numeric type
+        NumericArrayConverter<ElementOutput, ElementCompute, kCount, Round>
+                destination_converter;
+
         ComputeFragment converted_accumulator =
                 accumulator_converter(accumulator);
+
+        if (Scale == ScaleType::Nothing)
+            return destination_converter(converted_accumulator);
 
         // Perform binary operations
         ComputeFragment intermediate;
@@ -196,10 +226,6 @@ public:
 
         intermediate = mul_accumulator(
                 alpha_, converted_accumulator);  // D = alpha * Accum
-
-        // Convert to destination numeric type
-        NumericArrayConverter<ElementOutput, ElementCompute, kCount, Round>
-                destination_converter;
 
         return destination_converter(intermediate);
     }
@@ -210,3 +236,5 @@ public:
 }  // namespace thread
 }  // namespace epilogue
 }  // namespace cutlass
+
+/////////////////////////////////////////////////////////////////////////////////////////////////

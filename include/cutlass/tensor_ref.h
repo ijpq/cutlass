@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -202,16 +202,27 @@ public:
 
     /// Constructs a TensorRef with a pointer and layout object.
     CUTLASS_HOST_DEVICE
-    TensorRef(Element* ptr = nullptr,          ///< pointer to start of tensor
-              Layout const& layout = Layout()  ///< layout object containing
-                                               ///< stride and mapping function
+    TensorRef() : ptr_(nullptr) {}
+
+    /// Constructs a TensorRef with a pointer and layout object.
+    CUTLASS_HOST_DEVICE
+    TensorRef(Element* ptr,         ///< pointer to start of tensor
+              Layout const& layout  ///< layout object containing stride and
+                                    ///< mapping function
               )
             : ptr_(ptr), layout_(layout) {}
 
     /// Converting constructor from TensorRef to non-constant data.
-    CUTLASS_HOST_DEVICE
-    TensorRef(NonConstTensorRef const& ref  ///< TensorRef to non-const data
-              )
+    template <typename _Magic = int>
+    CUTLASS_HOST_DEVICE TensorRef(
+            NonConstTensorRef const& ref,  ///< TensorRef to non-const data
+            /// SFINAE trick to avoid creating a copy-constructor when Element_
+            /// is already non-const
+            _Magic magic = (typename platform::enable_if<
+                            !platform::is_same<
+                                    NonConstTensorRef,
+                                    TensorRef<Element_, Layout_> >::value,
+                            _Magic>::type)0)
             : ptr_(ref.data()), layout_(ref.layout()) {}
 
     /// Returns a reference to constant-valued tensor.
@@ -271,11 +282,15 @@ public:
 
     /// Returns the layout object's stride in a given physical dimension
     CUTLASS_HOST_DEVICE
-    Index stride(int dim) const { return layout_.stride().at(dim); }
+    typename Layout::Stride::Index stride(int dim) const {
+        return layout_.stride().at(dim);
+    }
 
     /// Returns the layout object's stride in a given physical dimension
     CUTLASS_HOST_DEVICE
-    Index& stride(int dim) { return layout_.stride().at(dim); }
+    typename Layout::Stride::Index& stride(int dim) {
+        return layout_.stride().at(dim);
+    }
 
     /// Computes the offset of an index from the origin of the tensor
     CUTLASS_HOST_DEVICE

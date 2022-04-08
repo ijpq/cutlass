@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -47,8 +47,8 @@ class Array;
 template <typename T, int N, bool RegisterSized>
 struct sizeof_bits<Array<T, N, RegisterSized> > {
     static int const value =
-            sizeof(typename Array<T, N, RegisterSized>::Storage) * 8 *
-            Array<T, N, RegisterSized>::kStorageElements;
+            int(sizeof(typename Array<T, N, RegisterSized>::Storage)) * 8 *
+            int(Array<T, N, RegisterSized>::kStorageElements);
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -315,16 +315,18 @@ private:
     Storage storage[kElements];
 
 public:
-    CUTLASS_HOST_DEVICE
-    Array() {}
+#if 0
+  CUTLASS_HOST_DEVICE
+  Array() { }
 
-    CUTLASS_HOST_DEVICE
-    Array(Array const& x) {
-        CUTLASS_PRAGMA_UNROLL
-        for (int i = 0; i < kElements; ++i) {
-            storage[i] = x.storage[i];
-        }
+  CUTLASS_HOST_DEVICE
+  Array(Array const &x) {
+    CUTLASS_PRAGMA_UNROLL
+    for (int i = 0; i < kElements; ++i) {
+      storage[i] = x.storage[i];
     }
+  }
+#endif
 
     /// Efficient clear method
     CUTLASS_HOST_DEVICE

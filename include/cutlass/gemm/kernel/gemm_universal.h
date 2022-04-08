@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -37,6 +37,8 @@
 #include "cutlass/matrix_coord.h"
 #include "cutlass/complex.h"
 #include "cutlass/semaphore.h"
+
+#include "cutlass/layout/matrix.h"
 
 #include "cutlass/trace.h"
 
@@ -117,10 +119,15 @@ public:
         int64_t batch_stride_C;
         int64_t batch_stride_D;
 
-        int lda;
-        int ldb;
-        int ldc;
-        int ldd;
+        typename LayoutA::Stride stride_a;
+        typename LayoutB::Stride stride_b;
+        typename LayoutC::Stride stride_c;
+        typename LayoutC::Stride stride_d;
+
+        typename LayoutA::Stride::Index lda;
+        typename LayoutB::Stride::Index ldb;
+        typename LayoutC::Stride::Index ldc;
+        typename LayoutC::Stride::Index ldd;
 
         //
         // Methods
@@ -139,8 +146,47 @@ public:
                   int batch_count, typename EpilogueOutputOp::Params epilogue,
                   void const* ptr_A, void const* ptr_B, void const* ptr_C,
                   void* ptr_D, int64_t batch_stride_A, int64_t batch_stride_B,
-                  int64_t batch_stride_C, int64_t batch_stride_D, int lda,
-                  int ldb, int ldc, int ldd)
+                  int64_t batch_stride_C, int64_t batch_stride_D,
+                  typename LayoutA::Stride stride_a,
+                  typename LayoutB::Stride stride_b,
+                  typename LayoutC::Stride stride_c,
+                  typename LayoutC::Stride stride_d)
+                : mode(mode),
+                  problem_size(problem_size),
+                  batch_count(batch_count),
+                  epilogue(epilogue),
+                  ptr_A(ptr_A),
+                  ptr_B(ptr_B),
+                  ptr_C(ptr_C),
+                  ptr_D(ptr_D),
+                  batch_stride_A(batch_stride_A),
+                  batch_stride_B(batch_stride_B),
+                  batch_stride_C(batch_stride_C),
+                  batch_stride_D(batch_stride_D),
+                  stride_a(stride_a),
+                  stride_b(stride_b),
+                  stride_c(stride_c),
+                  stride_d(stride_d) {
+            lda = 0;
+            ldb = 0;
+            ldc = 0;
+            ldd = 0;
+
+            CUTLASS_TRACE_HOST(
+                    "GemmUniversal::Arguments::Arguments() - problem_size: "
+                    << problem_size);
+        }
+
+        /// constructs an arguments structure
+        Arguments(GemmUniversalMode mode, GemmCoord problem_size,
+                  int batch_count, typename EpilogueOutputOp::Params epilogue,
+                  void const* ptr_A, void const* ptr_B, void const* ptr_C,
+                  void* ptr_D, int64_t batch_stride_A, int64_t batch_stride_B,
+                  int64_t batch_stride_C, int64_t batch_stride_D,
+                  typename LayoutA::Stride::LongIndex lda,
+                  typename LayoutB::Stride::LongIndex ldb,
+                  typename LayoutC::Stride::LongIndex ldc,
+                  typename LayoutC::Stride::LongIndex ldd)
                 : mode(mode),
                   problem_size(problem_size),
                   batch_count(batch_count),
@@ -157,6 +203,10 @@ public:
                   ldb(ldb),
                   ldc(ldc),
                   ldd(ldd) {
+            stride_a = make_Coord(lda);
+            stride_b = make_Coord(ldb);
+            stride_c = make_Coord(ldc);
+            stride_d = make_Coord(ldd);
             CUTLASS_TRACE_HOST(
                     "GemmUniversal::Arguments::Arguments() - problem_size: "
                     << problem_size);
@@ -169,6 +219,7 @@ public:
             std::swap(args.problem_size.m(), args.problem_size.n());
             std::swap(args.ptr_A, args.ptr_B);
             std::swap(args.lda, args.ldb);
+            std::swap(args.stride_a, args.stride_b);
             std::swap(args.batch_stride_A, args.batch_stride_B);
 
             return args;
@@ -183,6 +234,7 @@ public:
     struct Params {
         cutlass::gemm::GemmCoord problem_size;
         cutlass::gemm::GemmCoord grid_tiled_shape;
+        int swizzle_log_tile;
 
         typename Mma::IteratorA::Params params_A;
         typename Mma::IteratorB::Params params_B;
@@ -213,7 +265,8 @@ public:
 
         CUTLASS_HOST_DEVICE
         Params()
-                : params_A(0),
+                : swizzle_log_tile(0),
+                  params_A(0),
                   params_B(0),
                   params_C(0),
                   params_D(0),
@@ -236,10 +289,20 @@ public:
                int gemm_k_size, void* workspace = nullptr)
                 : problem_size(args.problem_size),
                   grid_tiled_shape(grid_tiled_shape),
-                  params_A(args.lda),
-                  params_B(args.ldb),
-                  params_C(args.ldc),
-                  params_D(args.ldd),
+                  swizzle_log_tile(
+                          ThreadblockSwizzle().get_log_tile(grid_tiled_shape)),
+                  params_A(args.lda ? make_Coord_with_padding<
+                                              LayoutA::kStrideRank>(args.lda)
+                                    : args.stride_a),
+                  params_B(args.ldb ? make_Coord_with_padding<
+                                              LayoutB::kStrideRank>(args.ldb)
+                                    : args.stride_b),
+                  params_C(args.ldc ? make_Coord_with_padding<
+                                              LayoutC::kStrideRank>(args.ldc)
+                                    : args.stride_c),
+                  params_D(args.ldd ? make_Coord_with_padding<
+                                              LayoutC::kStrideRank>(args.ldd)
+                                    : args.stride_d),
                   output_op(args.epilogue),
                   mode(args.mode),
                   batch_count(args.batch_count),
@@ -273,7 +336,6 @@ public:
             output_op = args.epilogue;
 
             semaphore = static_cast<int*>(workspace);
-
             CUTLASS_TRACE_HOST("GemmUniversal::Params::update()");
         }
     };
@@ -300,20 +362,18 @@ public:
                 (platform::is_same<typename Mma::IteratorA::Layout,
                                    layout::ColumnMajorInterleaved<32>>::value)
                         ? 32
-                        : (platform::is_same<
-                                  typename Mma::IteratorA::Layout,
-                                  layout::ColumnMajorInterleaved<64>>::value)
-                                  ? 64
-                                  : Mma::IteratorA::AccessType::kElements;
+                : (platform::is_same<typename Mma::IteratorA::Layout,
+                                     layout::ColumnMajorInterleaved<64>>::value)
+                        ? 64
+                        : Mma::IteratorA::AccessType::kElements;
         static int const kAlignmentB =
                 (platform::is_same<typename Mma::IteratorB::Layout,
                                    layout::RowMajorInterleaved<32>>::value)
                         ? 32
-                        : (platform::is_same<
-                                  typename Mma::IteratorB::Layout,
-                                  layout::RowMajorInterleaved<64>>::value)
-                                  ? 64
-                                  : Mma::IteratorB::AccessType::kElements;
+                : (platform::is_same<typename Mma::IteratorB::Layout,
+                                     layout::RowMajorInterleaved<64>>::value)
+                        ? 64
+                        : Mma::IteratorB::AccessType::kElements;
         static int const kAlignmentC =
                 Epilogue::OutputTileIterator::kElementsPerAccess;
 
@@ -336,6 +396,12 @@ public:
         return can_implement(args.problem_size);
     }
 
+    static size_t get_extra_workspace_size(
+            Arguments const& args,
+            cutlass::gemm::GemmCoord const& grid_tiled_shape) {
+        return 0;
+    }
+
     /// Executes one GEMM
     CUTLASS_DEVICE
     void operator()(Params const& params, SharedStorage& shared_storage) {
@@ -343,7 +409,7 @@ public:
         ThreadblockSwizzle threadblock_swizzle;
 
         cutlass::gemm::GemmCoord threadblock_tile_offset =
-                threadblock_swizzle.get_tile_offset(params.grid_tiled_shape);
+                threadblock_swizzle.get_tile_offset(params.swizzle_log_tile);
 
         // Early exit if CTA is out of range
         if (params.grid_tiled_shape.m() <= threadblock_tile_offset.m() ||
@@ -440,7 +506,7 @@ public:
         //
 
         threadblock_tile_offset =
-                threadblock_swizzle.get_tile_offset(params.grid_tiled_shape);
+                threadblock_swizzle.get_tile_offset(params.swizzle_log_tile);
 
         // assume identity swizzle
         MatrixCoord threadblock_offset(
@@ -509,8 +575,6 @@ public:
             }
 
             semaphore.wait(threadblock_tile_offset.k());
-
-            __threadfence();
         }
 
         // Execute the epilogue operator to update the destination tensor.

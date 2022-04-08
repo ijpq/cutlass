@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -123,10 +123,10 @@ public:
         ElementC* ptr_C = tensor_C.device_data();
         ElementC* ptr_D = tensor_D.device_data();
 
-        int lda = tensor_A.layout().stride(0);
-        int ldb = tensor_B.layout().stride(0);
-        int ldc = tensor_C.layout().stride(0);
-        int ldd = tensor_D.layout().stride(0);
+        typename LayoutA::Stride::Index lda = tensor_A.layout().stride(0);
+        typename LayoutB::Stride::Index ldb = tensor_B.layout().stride(0);
+        typename LayoutC::Stride::Index ldc = tensor_C.layout().stride(0);
+        typename LayoutC::Stride::Index ldd = tensor_D.layout().stride(0);
 
         int64_t imag_stride_A = tensor_A.imaginary_stride();
         int64_t imag_stride_B = tensor_B.imaginary_stride();

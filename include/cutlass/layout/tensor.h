@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -106,6 +106,15 @@ public:
                )
             : stride_(make_Coord(stride_w, stride_h, stride_n)) {}
 
+    /// Constructor
+    // Once convolutions implement 64b stride this ctor can be deleted
+    CUTLASS_HOST_DEVICE
+    TensorNHWC(Coord<kStrideRank, LongIndex> const& stride)
+            : stride_(make_Coord(
+                      static_cast<typename Stride::Index>(stride[0]),
+                      static_cast<typename Stride::Index>(stride[1]),
+                      static_cast<typename Stride::Index>(stride[2]))) {}
+
     /// Helper returns a layout to a tightly packed NHWC tensor.
     CUTLASS_HOST_DEVICE
     static TensorNHWC packed(TensorCoord const& extent) {
@@ -148,11 +157,11 @@ public:
         fast_divmod(w, tmp, w, int(stride_[0]), c_mul, c_shr);
 #else
 
-        n = int(index / (stride_[0] * stride_[1] * stride_[2]));
-        LongIndex residual = index % (stride_[0] * stride_[1] * stride_[2]);
+        n = int(index / stride_[2]);
+        LongIndex residual = index % stride_[2];
 
-        h = int(residual / (stride_[0] * stride_[1]));
-        residual = (residual % (stride_[0] * stride_[1]));
+        h = int(residual / stride_[1]);
+        residual = (residual % stride_[1]);
 
         w = int(residual / stride_[0]);
         c = int(residual % stride_[0]);
@@ -428,6 +437,27 @@ public:
     CUTLASS_HOST_DEVICE
     TensorNCxHWx(Stride const& stride = Stride(0)) : stride_(stride) {}
 
+    /// Constructor
+    CUTLASS_HOST_DEVICE
+    TensorNCxHWx(
+            typename Stride::Index stride_w,  ///< number of elements between
+                                              ///< adjacent W coordinates
+            typename Stride::Index stride_h,  ///< number of elements between
+                                              ///< adjacent H coordinates
+            typename Stride::Index stride_n   ///< number of elements between
+                                              ///< adjacent N coordinates
+            )
+            : stride_(make_Coord(stride_w, stride_h, stride_n)) {}
+
+    /// Constructor
+    // Once convolutions implement 64b stride this ctor can be deleted
+    CUTLASS_HOST_DEVICE
+    TensorNCxHWx(Coord<kStrideRank, LongIndex> const& stride)
+            : stride_(make_Coord(
+                      static_cast<typename Stride::Index>(stride[0]),
+                      static_cast<typename Stride::Index>(stride[1]),
+                      static_cast<typename Stride::Index>(stride[2]))) {}
+
     /// Helper returns a layout to a tightly packed tensor
     CUTLASS_HOST_DEVICE
     static TensorNCxHWx packed(TensorCoord const& extent) {
@@ -507,6 +537,27 @@ public:
     /// Constructor
     CUTLASS_HOST_DEVICE
     TensorCxRSKx(Stride const& stride = Stride(0)) : stride_(stride) {}
+
+    /// Constructor
+    CUTLASS_HOST_DEVICE
+    TensorCxRSKx(
+            typename Stride::Index stride_w,  ///< number of elements between
+                                              ///< adjacent W coordinates
+            typename Stride::Index stride_h,  ///< number of elements between
+                                              ///< adjacent H coordinates
+            typename Stride::Index stride_n   ///< number of elements between
+                                              ///< adjacent N coordinates
+            )
+            : stride_(make_Coord(stride_w, stride_h, stride_n)) {}
+
+    /// Constructor
+    // Once convolutions implement 64b stride this ctor can be deleted
+    CUTLASS_HOST_DEVICE
+    TensorCxRSKx(Coord<kStrideRank, LongIndex> const& stride)
+            : stride_(make_Coord(
+                      static_cast<typename Stride::Index>(stride[0]),
+                      static_cast<typename Stride::Index>(stride[1]),
+                      static_cast<typename Stride::Index>(stride[2]))) {}
 
     /// Helper returns a layout to a tightly packed tensor
     CUTLASS_HOST_DEVICE
@@ -761,6 +812,16 @@ public:
                 typename Stride::Index hwc, typename Stride::Index dhwc)
             : stride_(make_Coord(c, wc, hwc, dhwc)) {}
 
+    /// Constructor
+    // Once convolutions implement 64b stride this ctor can be deleted
+    CUTLASS_HOST_DEVICE
+    TensorNDHWC(Coord<kStrideRank, LongIndex> const& stride)
+            : stride_(make_Coord(
+                      static_cast<typename Stride::Index>(stride[0]),
+                      static_cast<typename Stride::Index>(stride[1]),
+                      static_cast<typename Stride::Index>(stride[2]),
+                      static_cast<typename Stride::Index>(stride[3]))) {}
+
     /// Helper returns a layout to a tightly packed NHWC tensor.
     CUTLASS_HOST_DEVICE
     static TensorNDHWC packed(TensorCoord const& extent) {
@@ -777,6 +838,12 @@ public:
                LongIndex(stride_[1] * coord.h()) +
                LongIndex(stride_[2] * coord.d()) +
                LongIndex(stride_[3] * coord.n());
+    }
+
+    /// Returns the offset of a pitchlinear coordinate in linear memory.
+    CUTLASS_HOST_DEVICE
+    LongIndex operator()(PitchLinearCoord coord) const {
+        return coord.contiguous() + LongIndex(coord.strided() * stride_[3]);
     }
 
     /// Returns the stride of the layout

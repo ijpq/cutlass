@@ -1,1 +1,5 @@
 build
+/ci/build_cmake
+/ci/*.csv
+/ci/*.txt
+__pycache__

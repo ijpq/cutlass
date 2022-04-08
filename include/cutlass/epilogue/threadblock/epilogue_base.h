@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -34,6 +34,11 @@
 */
 
 #pragma once
+
+#if !defined(__CUDACC_RTC__)
+#include <type_traits>
+#include <utility>
+#endif
 
 #if defined(__CUDACC_RTC__)
 #include <cuda/std/cassert>
@@ -62,6 +67,37 @@ namespace threadblock {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+//
+// This is used for metaprogramming epilogue functors. If they define
+// `static bool const kIsHeavy = true;`, then the epilogue functor itself is
+// not inlined. This results in smaller code and is advantageous if the epilogue
+// functor consists of many instructions.
+//
+// If the epilogue functor does not define `kIsHeavy` or if it is `false`, then
+// the behavior from CUTLASS 2.5 and before is retained. The epilogue is fully
+// unrolled and inlined.
+//
+
+template <class>
+struct TypeSink {
+    typedef void type;
+};
+
+template <class T>
+using TypeSinkT = typename TypeSink<T>::type;
+
+template <class T, class = void>
+struct IsEpilogueFunctorHeavy {
+    static bool const value = false;
+};
+
+template <class T>
+struct IsEpilogueFunctorHeavy<T, TypeSinkT<decltype(T::kIsHeavy)> > {
+    static bool const value = T::kIsHeavy;
+};
+
+////////////////////////////////////////////////////////////////////////////////
+
 /// Base class for epilogues defining warp-level
 template <typename Shape_,  ///< Shape of threadblock tile (concept: GemmShape)
           typename WarpShape_,  ///< Warp-level MMA operator (concept:
@@ -71,9 +107,9 @@ template <typename Shape_,  ///< Shape of threadblock tile (concept: GemmShape)
                                                   ///< selecting accumulators
           typename WarpTileIterator_,  ///< Warp-scoped tile iterator writing
                                        ///< accumulators to SMEM
-          typename Padding_  ///< Padding added to SMEM allocation to avoid bank
-                             ///< conflicts (concept: MatrixShape)
-          >
+          typename Padding_,  ///< Padding added to SMEM allocation to avoid
+                              ///< bank conflicts (concept: MatrixShape)
+          int FragmentsPerIteration = 1>
 class EpilogueBase {
 public:
     using Shape = Shape_;
@@ -96,6 +132,9 @@ public:
     /// Number of warps
     using WarpCount = gemm::GemmShape<Shape::kM / WarpShape::kM,
                                       Shape::kN / WarpShape::kN, kPartitionsK>;
+
+    /// Use this to control the granularity of one epilogue 'iteration'
+    static int const kFragmentsPerIteration = FragmentsPerIteration;
 
 public:
     /// Shared storage allocation needed by the epilogue
@@ -120,7 +159,8 @@ public:
                             WarpCount::kN * WarpTileIterator::Shape::kColumn>;
 
         /// Shape of the shared memory allocation for the epilogue
-        using StorageShape = MatrixShape<Shape::kRow + Padding::kRow,
+        using StorageShape = MatrixShape<(Shape::kRow + Padding::kRow) *
+                                                 kFragmentsPerIteration,
                                          Shape::kColumn + Padding::kColumn>;
 
         //

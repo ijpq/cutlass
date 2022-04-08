@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -36,6 +36,13 @@
 
 #include "cutlass/arch/memory_sm75.h"
 #include "cutlass/epilogue/warp/tensor_op_policy.h"
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
+// This is an optimization available on CUDA 11.2 and beyond that eliminates
+// branches in the epilogue.
+#define CUTLASS_EPILOGUE_WARP_TILE_ITERATOR_TENSOR_OP_MIXED_OPTIMIZATION_ENABLED \
+    ((__CUDACC_VER_MAJOR__ * 10 + __CUDACC_VER_MINOR__) >= 112)
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -205,43 +212,52 @@ public:
     void store_with_pointer_offset(Fragment const& frag, Index pointer_offset) {
         AccessType const* frag_ptr = reinterpret_cast<AccessType const*>(&frag);
 
+        AccessType* ptr = pointers_[0];
+
+#if CUTLASS_EPILOGUE_WARP_TILE_ITERATOR_TENSOR_OP_MIXED_OPTIMIZATION_ENABLED
+
+        // When the optimization is enabled, small tiles require separate logic.
+        if (WarpShape::kN == 32 && warp_column_ > 0) {
+            ptr = pointers_[1];
+        }
+
+#endif
+
         CUTLASS_PRAGMA_UNROLL
         for (int64_t n = 0; n < Policy::OperatorCount::kColumn; ++n) {
-            int column_idx = warp_column_ + n * Detail::kLanesInQuad *
-                                                    Policy::kElementsPerAccess;
-            int ptr_idx = ((column_idx * sizeof_bits<Element>::value) / 1024) %
-                          Detail::kPointerCount;
+#if CUTLASS_EPILOGUE_WARP_TILE_ITERATOR_TENSOR_OP_MIXED_OPTIMIZATION_ENABLED
 
-            AccessType* ptr;
-            if (ptr_idx == 0) {
-                ptr = pointers_[0 % Detail::kPointerCount];
-            } else if (ptr_idx == 1) {
-                ptr = pointers_[1 % Detail::kPointerCount];
-            } else if (ptr_idx == 2) {
-                ptr = pointers_[2 % Detail::kPointerCount];
-            } else if (ptr_idx == 3) {
-                ptr = pointers_[3 % Detail::kPointerCount];
+            //
+            // When the optimization is enabled, this expression suffices to
+            // obtain the SMEM pointer.
+            //
+            if (WarpShape::kN == 64) {
+                ptr = pointers_[n / 4];
+            } else
+#endif
+            {
+                // This is the reference implementation
+                int column_idx =
+                        warp_column_ +
+                        n * Detail::kLanesInQuad * Policy::kElementsPerAccess;
+                int ptr_idx =
+                        ((column_idx * sizeof_bits<Element>::value) / 1024) %
+                        Detail::kPointerCount;
+
+                if (ptr_idx == 0) {
+                    ptr = pointers_[0 % Detail::kPointerCount];
+                } else if (ptr_idx == 1) {
+                    ptr = pointers_[1 % Detail::kPointerCount];
+                } else if (ptr_idx == 2) {
+                    ptr = pointers_[2 % Detail::kPointerCount];
+                } else if (ptr_idx == 3) {
+                    ptr = pointers_[3 % Detail::kPointerCount];
+                }
             }
 
             int offset = n * Detail::kLanesInQuad +
                          pointer_offset / Policy::kElementsPerAccess;
-#if 0
-      // Using inline PTX to avoid generic memory
-      AccessType *smem_ptr = pointers_[ptr_idx];
-      smem_ptr[offset] = frag_ptr[n];
-#else
-            uint32_t smem_addr = arch::cutlass_get_smem_pointer(ptr);
-            uint32_t const* data =
-                    reinterpret_cast<uint32_t const*>(frag_ptr + n);
-            uint32_t offset_in_bytes = offset * sizeof(AccessType);
-
-            asm volatile(
-                    "{ .reg .u32 smem_ptr; add.u32 smem_ptr, %0, %1; "
-                    "st.shared.v2.u32 [smem_ptr], {%2, %3}; }\n"
-                    :
-                    : "r"(smem_addr), "r"(offset_in_bytes), "r"(data[0]),
-                      "r"(data[1]));
-#endif
+            ptr[offset] = frag_ptr[n];
         }
     }
 
@@ -657,5 +673,9 @@ public:
 }  // namespace warp
 }  // namespace epilogue
 }  // namespace cutlass
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
+#undef CUTLASS_EPILOGUE_WARP_TILE_ITERATOR_TENSOR_OP_MIXED_OPTIMIZATION_ENABLED
 
 /////////////////////////////////////////////////////////////////////////////////////////////////

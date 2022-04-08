@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -63,13 +63,15 @@ template <typename ElementA, typename ElementB, typename ElementC,
           typename ElementAccumulator, typename ArchTag,
           typename ThreadblockShape, typename WarpShape,
           typename InstructionShape, typename EpilogueOutputOp,
-          typename ThreadblockSwizzle, typename MathOperatorTag>
+          typename ThreadblockSwizzle, typename MathOperatorTag,
+          int AlignmentA, int AlignmentB>
 struct DefaultConv2dDgrad<
         ElementA, layout::TensorNHWC, ElementB, layout::TensorCHWN, ElementC,
         layout::TensorNHWC, ElementAccumulator, arch::OpClassTensorOp, ArchTag,
         ThreadblockShape, WarpShape, InstructionShape, EpilogueOutputOp,
-        ThreadblockSwizzle, 2, MathOperatorTag, IteratorAlgorithm::kAnalytic,
-        StrideSupport::kStrided> {
+        ThreadblockSwizzle, int(2), MathOperatorTag, IteratorAlgorithm::kAnalytic,
+        StrideSupport::kStrided,
+        AlignmentA, AlignmentB> {
     using LayoutA = layout::TensorNHWC;
     using LayoutB = layout::TensorCHWN;
     using LayoutC = layout::TensorNHWC;
@@ -128,15 +130,17 @@ template <typename ElementA, typename ElementB, typename ElementC,
           typename ThreadblockShape, typename WarpShape,
           typename InstructionShape, typename EpilogueOutputOp,
           typename ThreadblockSwizzle, typename MathOperatorTag,
-          int InterleavedK>
+          int InterleavedK,
+          int AlignmentA, int AlignmentB>
 struct DefaultConv2dDgrad<ElementA, layout::TensorNCxHWx<InterleavedK>,
                           ElementB, layout::TensorKxRSCx<InterleavedK>,
                           ElementC, layout::TensorNCxHWx<InterleavedK>,
                           ElementAccumulator, arch::OpClassTensorOp, ArchTag,
                           ThreadblockShape, WarpShape, InstructionShape,
-                          EpilogueOutputOp, ThreadblockSwizzle, 2,
+                          EpilogueOutputOp, ThreadblockSwizzle, int(2),
                           MathOperatorTag, IteratorAlgorithm::kAnalytic,
-                          StrideSupport::kStrided> {
+                          StrideSupport::kStrided,
+                          AlignmentA, AlignmentB> {
     using LayoutA = layout::TensorNCxHWx<InterleavedK>;
     using LayoutB = layout::TensorKxRSCx<InterleavedK>;
     using LayoutC = layout::TensorNCxHWx<InterleavedK>;
@@ -196,14 +200,16 @@ template <typename ElementA, typename ElementB, typename ElementC,
           typename ThreadblockShape, typename WarpShape,
           typename InstructionShape, typename EpilogueOutputOp,
           typename ThreadblockSwizzle, typename MathOperatorTag,
-          int InterleavedK>
+          int InterleavedK,
+          int AlignmentA, int AlignmentB>
 struct DefaultConv2dDgrad<
         ElementA, layout::TensorNCxHWx<InterleavedK>, ElementB,
         layout::TensorKxRSCx<InterleavedK>, ElementC,
         layout::TensorNCxHWx<InterleavedK>, ElementAccumulator,
         arch::OpClassTensorOp, ArchTag, ThreadblockShape, WarpShape,
-        InstructionShape, EpilogueOutputOp, ThreadblockSwizzle, 2,
-        MathOperatorTag, IteratorAlgorithm::kAnalytic, StrideSupport::kUnity> {
+        InstructionShape, EpilogueOutputOp, ThreadblockSwizzle, int(2),
+        MathOperatorTag, IteratorAlgorithm::kAnalytic, StrideSupport::kUnity,
+        AlignmentA, AlignmentB> {
     using LayoutA = layout::TensorNCxHWx<InterleavedK>;
     using LayoutB = layout::TensorKxRSCx<InterleavedK>;
     using LayoutC = layout::TensorNCxHWx<InterleavedK>;

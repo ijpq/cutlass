@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -127,6 +127,9 @@ public:
     /// Long Index type
     using LongIndex = typename TensorRef::LongIndex;
 
+    /// Long Index type
+    using StrideIndex = typename TensorRef::Layout::Stride::Index;
+
     /// Coordinate for an element in the tensor
     using TensorCoord = typename TensorRef::TensorCoord;
 
@@ -164,7 +167,7 @@ public:
 
 private:
     /// Layout object storing stride values
-    Index stride_;
+    StrideIndex stride_;
 
     /// Shared memory base pointers - not advanced
     AccessType const* pointer_;
@@ -390,6 +393,9 @@ public:
     /// Long Index type
     using LongIndex = typename TensorRef::LongIndex;
 
+    /// Long Index type
+    using StrideIndex = typename TensorRef::Layout::Stride::Index;
+
     /// Coordinate for an element in the tensor
     using TensorCoord = typename TensorRef::TensorCoord;
 
@@ -611,6 +617,9 @@ public:
     /// Long Index type
     using LongIndex = typename TensorRef::LongIndex;
 
+    /// Long Index type
+    using StrideIndex = typename TensorRef::Layout::Stride::Index;
+
     /// Coordinate for an element in the tensor
     using TensorCoord = typename TensorRef::TensorCoord;
 
@@ -822,6 +831,9 @@ public:
 
     /// Long Index type
     using LongIndex = typename TensorRef::LongIndex;
+
+    /// Long Index type
+    using StrideIndex = typename TensorRef::Layout::Stride::Index;
 
     /// Coordinate for an element in the tensor
     using TensorCoord = typename TensorRef::TensorCoord;
@@ -1169,6 +1181,9 @@ public:
     /// Long Index type
     using LongIndex = typename TensorRef::LongIndex;
 
+    /// Long Index type
+    using StrideIndex = typename TensorRef::Layout::Stride::Index;
+
     /// Coordinate for an element in the tensor
     using TensorCoord = typename TensorRef::TensorCoord;
 
@@ -1207,7 +1222,7 @@ public:
 
 private:
     /// Layout object storing stride values
-    Index stride_;
+    StrideIndex stride_;
 
     /// Shared memory base pointers - not advanced
     AccessType const* pointer_;
@@ -1442,6 +1457,9 @@ public:
     /// Long Index type
     using LongIndex = typename TensorRef::LongIndex;
 
+    /// Long Index type
+    using StrideIndex = typename TensorRef::Layout::Stride::Index;
+
     /// Coordinate for an element in the tensor
     using TensorCoord = typename TensorRef::TensorCoord;
 
@@ -1662,6 +1680,9 @@ public:
 
     /// Long Index type
     using LongIndex = typename TensorRef::LongIndex;
+
+    /// Long Index type
+    using StrideIndex = typename TensorRef::Layout::Stride::Index;
 
     /// Coordinate for an element in the tensor
     using TensorCoord = typename TensorRef::TensorCoord;
@@ -1896,6 +1917,9 @@ public:
     /// Long Index type
     using LongIndex = typename TensorRef::LongIndex;
 
+    /// Long Index type
+    using StrideIndex = typename TensorRef::Layout::Stride::Index;
+
     /// Coordinate for an element in the tensor
     using TensorCoord = typename TensorRef::TensorCoord;
 
@@ -1936,7 +1960,7 @@ public:
 
 private:
     /// Layout object storing stride values
-    Index stride_;
+    StrideIndex stride_;
 
     /// Shared memory base pointers - not advanced
     AccessType const* pointer_;
@@ -2195,6 +2219,9 @@ public:
     /// Long Index type
     using LongIndex = typename TensorRef::LongIndex;
 
+    /// Long Index type
+    using StrideIndex = typename TensorRef::Layout::Stride::Index;
+
     /// Coordinate for an element in the tensor
     using TensorCoord = typename TensorRef::TensorCoord;
 
@@ -2233,7 +2260,7 @@ public:
 
 private:
     /// Layout object storing stride values
-    Index stride_;
+    StrideIndex stride_;
 
     /// Shared memory base pointers - not advanced
     AccessType const* pointer_;
@@ -2283,6 +2310,19 @@ public:
                 tile_offset.strided() * Shape::kStrided;
 
         add_pointer_offset(offset);
+
+        return *this;
+    }
+
+    /// Advances an iterator along logical dimensions of matrix in units of
+    /// whole tiles
+    CUTLASS_DEVICE
+    MmaTensorOpMultiplicandTileIterator& add_tile_offset_negative(
+            TensorCoord const& tile_offset) {
+        add_tile_offset(tile_offset);
+
+        if (k_group_idx_ & 1)
+            byte_offset_ ^= 0x40;
 
         return *this;
     }

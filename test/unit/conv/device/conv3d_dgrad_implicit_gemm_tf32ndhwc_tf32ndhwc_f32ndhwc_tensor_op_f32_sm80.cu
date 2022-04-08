@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -65,7 +65,8 @@ TEST(SM80_Device_Conv3d_Dgrad_Analytic_ImplicitGemm_tf32ndhwc_tf32ndhwc_f32ndhwc
                             ElementAccumulator, ElementCompute>,
                     cutlass::gemm::threadblock::
                             GemmIdentityThreadblockSwizzle<>,
-                    3, cutlass::arch::OpMultiplyAdd>::Kernel;
+                    3, cutlass::arch::OpMultiplyAdd,
+                    cutlass::conv::IteratorAlgorithm::kAnalytic>::Kernel;
 
     using Conv3dDgrad =
             cutlass::conv::device::ImplicitGemmConvolution<Conv3dDgradKernel>;

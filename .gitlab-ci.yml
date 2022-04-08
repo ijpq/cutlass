@@ -25,9 +25,9 @@ stages:
     CHARGED_GROUP: engine_ci
     MACHINE_GROUP: engine_ci
     DOCKER_IMAGE: registry.hh-d.brainpp.cn/megvii-engine/megbrain_ci:cu111_nv460_cudnn804_v3
-    EXPECTED_CPU: 32
+    EXPECTED_CPU: 24
     EXPECTED_GPU: 1
-    EXPECTED_MEMORY: 61440
+    EXPECTED_MEMORY: 40960
     POSITIVE_TAGS: 2080ti
   
 check:

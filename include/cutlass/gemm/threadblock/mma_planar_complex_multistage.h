@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -368,12 +368,10 @@ public:
         CUTLASS_PRAGMA_UNROLL
         for (int stage = 0; stage < Base::kStages - 1;
              ++stage, --gemm_k_iterations) {
-            if (gemm_k_iterations == 0) {
-                iterator_A_real.clear_mask();
-                iterator_A_imag.clear_mask();
-                iterator_B_real.clear_mask();
-                iterator_B_imag.clear_mask();
-            }
+            iterator_A_real.clear_mask(gemm_k_iterations == 0);
+            iterator_A_imag.clear_mask(gemm_k_iterations == 0);
+            iterator_B_real.clear_mask(gemm_k_iterations == 0);
+            iterator_B_imag.clear_mask(gemm_k_iterations == 0);
 
             iterator_A_real.set_iteration_index(0);
             iterator_A_imag.set_iteration_index(0);
@@ -503,12 +501,10 @@ public:
         ++this->warp_tile_iterator_A_;
         ++this->warp_tile_iterator_B_;
 
-        if (gemm_k_iterations == 0) {
-            iterator_A_real.clear_mask();
-            iterator_A_imag.clear_mask();
-            iterator_B_real.clear_mask();
-            iterator_B_imag.clear_mask();
-        }
+        iterator_A_real.clear_mask(gemm_k_iterations == 0);
+        iterator_A_imag.clear_mask(gemm_k_iterations == 0);
+        iterator_B_real.clear_mask(gemm_k_iterations == 0);
+        iterator_B_imag.clear_mask(gemm_k_iterations == 0);
 
         // Start issuing the first group of the next stage outside of the
         // mainloop
@@ -624,12 +620,10 @@ public:
                     }
 
                     --gemm_k_iterations;
-                    if (gemm_k_iterations == 0) {
-                        iterator_A_real.clear_mask();
-                        iterator_A_imag.clear_mask();
-                        iterator_B_real.clear_mask();
-                        iterator_B_imag.clear_mask();
-                    }
+                    iterator_A_real.clear_mask(gemm_k_iterations == 0);
+                    iterator_A_imag.clear_mask(gemm_k_iterations == 0);
+                    iterator_B_real.clear_mask(gemm_k_iterations == 0);
+                    iterator_B_imag.clear_mask(gemm_k_iterations == 0);
                 }
 
                 warp_mma_planar_complex(warp_mma, accum,

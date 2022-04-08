@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -35,6 +35,7 @@
 #include <cmath>
 #include <limits>
 #include <cstdint>
+#include <cstring>
 #endif
 
 #include "cutlass/cutlass.h"
@@ -77,7 +78,13 @@ struct alignas(2) bfloat16_t {
         asm("cvt.rn.bf16.f32 %0, %1;\n" : "=h"(storage) : "f"(x));
 
 #else
-        uint32_t bits = reinterpret_cast<uint32_t&>(x);
+        uint32_t bits;
+
+#if defined(__CUDA_ARCH__)
+        bits = reinterpret_cast<uint32_t&>(x);
+#else
+        std::memcpy(&bits, &x, sizeof(bits));
+#endif
 
         if ((bits & 0x7f800000) != 0x7f800000) {
             bool mantissa_bit = ((bits & (1 << 16)) != 0);
@@ -103,19 +110,33 @@ struct alignas(2) bfloat16_t {
     CUTLASS_HOST_DEVICE
     explicit bfloat16_t(int x) {
         float flt = static_cast<float>(x);
-        storage = uint16_t(reinterpret_cast<uint32_t const&>(flt) >> 16);
+        uint32_t bits;
+
+#if defined(__CUDA_ARCH__)
+        bits = reinterpret_cast<uint32_t&>(flt);
+#else
+        std::memcpy(&bits, &flt, sizeof(bits));
+#endif
+
+        storage = uint16_t(bits >> 16);
     }
 
     /// Converts to float
     CUTLASS_HOST_DEVICE
     operator float() const {
         unsigned bits = (unsigned(storage) << 16);
+#if defined(__CUDA_ARCH__)
         return reinterpret_cast<float const&>(bits);
+#else
+        float flt;
+        std::memcpy(&flt, &bits, sizeof(flt));
+        return flt;
+#endif
     }
 
     /// Converts to float
     CUTLASS_HOST_DEVICE
-    operator double() const { return double(float(*this)); }
+    explicit operator double() const { return double(float(*this)); }
 
     /// Converts to int
     CUTLASS_HOST_DEVICE
@@ -123,7 +144,7 @@ struct alignas(2) bfloat16_t {
 
     /// Casts to bool
     CUTLASS_HOST_DEVICE
-    operator bool() const { return (float(*this) != 0.0f); }
+    explicit operator bool() const { return (float(*this) != 0.0f); }
 
     /// Obtains raw bits
     CUTLASS_HOST_DEVICE
@@ -214,11 +235,22 @@ cutlass::bfloat16_t sqrt(cutlass::bfloat16_t const& h) {
 
 CUTLASS_HOST_DEVICE
 bfloat16_t copysign(bfloat16_t const& a, bfloat16_t const& b) {
-    uint16_t a_mag = (reinterpret_cast<uint16_t const&>(a) & 0x7fff);
-    uint16_t b_sign = (reinterpret_cast<uint16_t const&>(b) & 0x8000);
+    uint16_t a_bits;
+    uint16_t b_bits;
+
+#if defined(__CUDA_ARCH__)
+    a_bits = reinterpret_cast<uint16_t const&>(a);
+    b_bits = reinterpret_cast<uint16_t const&>(b);
+#else
+    std::memcpy(&a_bits, &a, sizeof(a_bits));
+    std::memcpy(&b_bits, &b, sizeof(b_bits));
+#endif
+
+    uint16_t a_mag = (a_bits & 0x7fff);
+    uint16_t b_sign = (b_bits & 0x8000);
     uint16_t result = (a_mag | b_sign);
 
-    return reinterpret_cast<bfloat16_t const&>(result);
+    return bfloat16_t::bitcast(result);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////

@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -85,12 +85,16 @@ public:
 
     using Index = typename Layout::Index;
     using LongIndex = typename Layout::LongIndex;
+    using StrideIndex = typename Layout::Stride::Index;
 
     using TensorRef = TensorRef<Element, Layout>;
     using TensorCoord = typename Layout::TensorCoord;
 
     using Fragment = Array<Element, ThreadMap::Iterations::kCount *
                                             ThreadMap::kElementsPerAccess>;
+
+    using AccessType =
+            AlignedArray<Element, ThreadMap::kElementsPerAccess, kAlignment>;
 
     static_assert(kAdvanceRank == 0 || kAdvanceRank == 1,
                   "Advance rank may only be along the contiguous or strided "
@@ -101,9 +105,6 @@ private:
     // Types
     //
 
-    using AccessType =
-            AlignedArray<Element, ThreadMap::kElementsPerAccess, kAlignment>;
-
     //
     // Data members
     //
@@ -112,7 +113,7 @@ private:
     uint8_t* pointer_;
 
     /// Stride quantity
-    Index stride_;
+    StrideIndex stride_;
 
     /// Amount to increment pointer along strided dimension
     Index increment_strided_;
@@ -238,7 +239,16 @@ public:
         pointer_ += pointer_offset;
     }
 
-    /// Adds a tile offset
+    /// Adds a tile offset in the unit of tile.
+    /// In GEMM/Conv implementation, this is used to move in the k dimension in
+    /// the shared memory. Below layouts are the shared memory layouts.  Current
+    /// SM50 SIMT kernels only use col major A and row major B.
+    ///   For row major A operand, k dimension is contiguous dimension;
+    ///   For col major A operand, k dimension is strided dimension;
+    ///   For row major B operand, k dimension is strided dimension;
+    ///   For col major B operand, k dimension is contiguous dimension.
+    /// Below two classes map col/row major to the pitch linear coordinates used
+    /// in this base class.
     CUTLASS_DEVICE
     void add_tile_offset(TensorCoord const& coord) {
         int offset = sizeof_bits<Element>::value *
@@ -246,6 +256,28 @@ public:
                       coord.strided() * Shape::kStrided * stride_) /
                      8;
         add_pointer_offset(offset);
+    }
+
+    /// Overrides the internal iteration index
+    CUTLASS_HOST_DEVICE
+    void set_iteration_index(int index) {}
+
+    /// Returns a pointer
+    CUTLASS_HOST_DEVICE
+    AccessType* get() const {
+#if 0
+    AccessType *access_ptr = pointer_[iteration_strided_ & 1];
+    int stride_idx = (iteration_strided_ & ~1);
+
+    int access_offset = stride_idx * ThreadMap::Delta::kStrided * stride_ +
+                        iteration_contiguous_ * ThreadMap::Delta::kContiguous /
+                            ThreadMap::kElementsPerAccess;
+
+    char *access_byte_ptr =
+        reinterpret_cast<char *>(access_ptr + access_offset);
+    return reinterpret_cast<AccessType *>(access_byte_ptr + byte_offset_);
+#endif
+        return reinterpret_cast<AccessType*>(pointer_);
     }
 };
 
@@ -277,6 +309,8 @@ public:
             layout::PitchLinearShape<Shape::kColumn, Shape::kRow>, Element,
             layout::PitchLinear, (kAdvanceRank == 0 ? 1 : 0), ThreadMap,
             kAlignment>;
+
+    using AccessType = typename Underlying::AccessType;
 
     static_assert(
             kAdvanceRank == 0 || kAdvanceRank == 1,
@@ -354,6 +388,14 @@ public:
     void add_tile_offset(TensorCoord const& coord) {
         iterator_.add_tile_offset({coord.column(), coord.row()});
     }
+
+    /// Overrides the internal iteration index
+    CUTLASS_HOST_DEVICE
+    void set_iteration_index(int index) {}
+
+    /// Returns a pointer
+    CUTLASS_HOST_DEVICE
+    AccessType* get() const { return iterator_.get(); }
 };
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -383,6 +425,8 @@ public:
     using Underlying = RegularTileIterator<
             layout::PitchLinearShape<Shape::kRow, Shape::kColumn>, Element,
             layout::PitchLinear, (kAdvanceRank == 0 ? 0 : 1), ThreadMap>;
+
+    using AccessType = typename Underlying::AccessType;
 
     static_assert(
             kAdvanceRank == 0 || kAdvanceRank == 1,
@@ -460,6 +504,14 @@ public:
     void add_tile_offset(TensorCoord const& coord) {
         iterator_.add_tile_offset({coord.row(), coord.column()});
     }
+
+    /// Overrides the internal iteration index
+    CUTLASS_HOST_DEVICE
+    void set_iteration_index(int index) {}
+
+    /// Returns a pointer
+    CUTLASS_HOST_DEVICE
+    AccessType* get() const { return iterator_.get(); }
 };
 
 /////////////////////////////////////////////////////////////////////////////////////////////////

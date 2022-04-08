@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -70,11 +70,11 @@ struct Mma_HFMA2;
 // Specialization for NNN  //
 /////////////////////////////
 
-template <typename Shape>
-struct Mma_HFMA2<Shape, layout::ColumnMajor, layout::ColumnMajor,
+template <typename Shape_>
+struct Mma_HFMA2<Shape_, layout::ColumnMajor, layout::ColumnMajor,
                  layout::ColumnMajor, true> {
-    static_assert(!(Shape::kM % 2),
-                  "Mma_HFMA2 requires the M dimension to be divisible by 2.");
+    /// Size of the Gemm problem - concept: gemm::GemmShape<>
+    using Shape = Shape_;
 
     /// A operand storage
     using FragmentA = Array<half_t, Shape::kMK>;
@@ -87,6 +87,9 @@ struct Mma_HFMA2<Shape, layout::ColumnMajor, layout::ColumnMajor,
 
     /// Underlying mathematical operator
     using Operator = arch::OpMultiplyAdd;
+
+    static_assert(!(Shape::kM % 2),
+                  "Mma_HFMA2 requires the M dimension to be divisible by 2.");
 
     //
     // Methods
@@ -136,11 +139,11 @@ struct Mma_HFMA2<Shape, layout::ColumnMajor, layout::ColumnMajor,
 // Specialization for NNT  //
 /////////////////////////////
 
-template <typename Shape>
-struct Mma_HFMA2<Shape, layout::ColumnMajor, layout::ColumnMajor,
+template <typename Shape_>
+struct Mma_HFMA2<Shape_, layout::ColumnMajor, layout::ColumnMajor,
                  layout::RowMajor, true> {
-    static_assert(!(Shape::kN % 2),
-                  "Mma_HFMA2 requires the N dimension to be divisible by 2.");
+    /// Size of the Gemm problem - concept: gemm::GemmShape<>
+    using Shape = Shape_;
 
     /// A operand storage
     using FragmentA = Array<half_t, Shape::kMK>;
@@ -153,6 +156,9 @@ struct Mma_HFMA2<Shape, layout::ColumnMajor, layout::ColumnMajor,
 
     /// Underlying mathematical operator
     using Operator = arch::OpMultiplyAdd;
+
+    static_assert(!(Shape::kN % 2),
+                  "Mma_HFMA2 requires the N dimension to be divisible by 2.");
 
     //
     // Methods
@@ -205,12 +211,11 @@ struct Mma_HFMA2<Shape, layout::ColumnMajor, layout::ColumnMajor,
 // Specialization for NTN  //
 /////////////////////////////
 
-template <typename Shape>
-struct Mma_HFMA2<Shape, layout::ColumnMajor, layout::RowMajor,
+template <typename Shape_>
+struct Mma_HFMA2<Shape_, layout::ColumnMajor, layout::RowMajor,
                  layout::ColumnMajor, true> {
-    static_assert(
-            !(Shape::kM % 2),
-            "Mma_HFMA2 requires the GEMM M dimension to be divisible by 2.");
+    /// Size of the Gemm problem - concept: gemm::GemmShape<>
+    using Shape = Shape_;
 
     /// A operand storage
     using FragmentA = Array<half_t, Shape::kMK>;
@@ -223,6 +228,10 @@ struct Mma_HFMA2<Shape, layout::ColumnMajor, layout::RowMajor,
 
     /// Underlying mathematical operator
     using Operator = arch::OpMultiplyAdd;
+
+    static_assert(
+            !(Shape::kM % 2),
+            "Mma_HFMA2 requires the GEMM M dimension to be divisible by 2.");
 
     //
     // Methods
@@ -272,11 +281,11 @@ struct Mma_HFMA2<Shape, layout::ColumnMajor, layout::RowMajor,
 // Specialization for NTT  //
 /////////////////////////////
 
-template <typename Shape>
-struct Mma_HFMA2<Shape, layout::ColumnMajor, layout::RowMajor, layout::RowMajor,
-                 true> {
-    static_assert(!(Shape::kN % 2),
-                  "Mma_HFMA2 requires the N dimension to be divisible by 2.");
+template <typename Shape_>
+struct Mma_HFMA2<Shape_, layout::ColumnMajor, layout::RowMajor,
+                 layout::RowMajor, true> {
+    /// Size of the Gemm problem - concept: gemm::GemmShape<>
+    using Shape = Shape_;
 
     /// A operand storage
     using FragmentA = Array<half_t, Shape::kMK>;
@@ -289,6 +298,10 @@ struct Mma_HFMA2<Shape, layout::ColumnMajor, layout::RowMajor, layout::RowMajor,
 
     /// Underlying mathematical operator
     using Operator = arch::OpMultiplyAdd;
+
+    static_assert(!(Shape::kN % 2),
+                  "Mma_HFMA2 requires the N dimension to be divisible by 2.");
+
     //
     // Methods
     //
@@ -337,11 +350,11 @@ struct Mma_HFMA2<Shape, layout::ColumnMajor, layout::RowMajor, layout::RowMajor,
 // Specialization for TNN  //
 /////////////////////////////
 
-template <typename Shape>
-struct Mma_HFMA2<Shape, layout::RowMajor, layout::ColumnMajor,
+template <typename Shape_>
+struct Mma_HFMA2<Shape_, layout::RowMajor, layout::ColumnMajor,
                  layout::ColumnMajor, true> {
-    static_assert(!(Shape::kM % 2),
-                  "Mma_HFMA2 requires the M dimension to be divisible by 2.");
+    /// Size of the Gemm problem - concept: gemm::GemmShape<>
+    using Shape = Shape_;
 
     /// A operand storage
     using FragmentA = Array<half_t, Shape::kMK>;
@@ -354,6 +367,9 @@ struct Mma_HFMA2<Shape, layout::RowMajor, layout::ColumnMajor,
 
     /// Underlying mathematical operator
     using Operator = arch::OpMultiplyAdd;
+
+    static_assert(!(Shape::kM % 2),
+                  "Mma_HFMA2 requires the M dimension to be divisible by 2.");
 
     //
     // Methods
@@ -406,11 +422,11 @@ struct Mma_HFMA2<Shape, layout::RowMajor, layout::ColumnMajor,
 // Specialization for TNT  //
 /////////////////////////////
 
-template <typename Shape>
-struct Mma_HFMA2<Shape, layout::RowMajor, layout::ColumnMajor, layout::RowMajor,
-                 true> {
-    static_assert(!(Shape::kN % 2),
-                  "Mma_HFMA2 requires the N dimension to be divisible by 2.");
+template <typename Shape_>
+struct Mma_HFMA2<Shape_, layout::RowMajor, layout::ColumnMajor,
+                 layout::RowMajor, true> {
+    /// Size of the Gemm problem - concept: gemm::GemmShape<>
+    using Shape = Shape_;
 
     /// A operand storage
     using FragmentA = Array<half_t, Shape::kMK>;
@@ -423,6 +439,9 @@ struct Mma_HFMA2<Shape, layout::RowMajor, layout::ColumnMajor, layout::RowMajor,
 
     /// Underlying mathematical operator
     using Operator = arch::OpMultiplyAdd;
+
+    static_assert(!(Shape::kN % 2),
+                  "Mma_HFMA2 requires the N dimension to be divisible by 2.");
 
     //
     // Methods
@@ -475,11 +494,11 @@ struct Mma_HFMA2<Shape, layout::RowMajor, layout::ColumnMajor, layout::RowMajor,
 // Specialization for TTN  //
 /////////////////////////////
 
-template <typename Shape>
-struct Mma_HFMA2<Shape, layout::RowMajor, layout::RowMajor, layout::ColumnMajor,
-                 true> {
-    static_assert(!(Shape::kM % 2),
-                  "Mma_HFMA2 requires the M dimension to be divisible by 2.");
+template <typename Shape_>
+struct Mma_HFMA2<Shape_, layout::RowMajor, layout::RowMajor,
+                 layout::ColumnMajor, true> {
+    /// Size of the Gemm problem - concept: gemm::GemmShape<>
+    using Shape = Shape_;
 
     /// A operand storage
     using FragmentA = Array<half_t, Shape::kMK>;
@@ -492,6 +511,9 @@ struct Mma_HFMA2<Shape, layout::RowMajor, layout::RowMajor, layout::ColumnMajor,
 
     /// Underlying mathematical operator
     using Operator = arch::OpMultiplyAdd;
+
+    static_assert(!(Shape::kM % 2),
+                  "Mma_HFMA2 requires the M dimension to be divisible by 2.");
 
     //
     // Methods
@@ -544,11 +566,11 @@ struct Mma_HFMA2<Shape, layout::RowMajor, layout::RowMajor, layout::ColumnMajor,
 // Specialization for TTT  //
 /////////////////////////////
 
-template <typename Shape>
-struct Mma_HFMA2<Shape, layout::RowMajor, layout::RowMajor, layout::RowMajor,
+template <typename Shape_>
+struct Mma_HFMA2<Shape_, layout::RowMajor, layout::RowMajor, layout::RowMajor,
                  true> {
-    static_assert(!(Shape::kN % 2),
-                  "Mma_HFMA2 requires the N dimension to be divisible by 2.");
+    /// Size of the Gemm problem - concept: gemm::GemmShape<>
+    using Shape = Shape_;
 
     /// A operand storage
     using FragmentA = Array<half_t, Shape::kMK>;
@@ -561,6 +583,9 @@ struct Mma_HFMA2<Shape, layout::RowMajor, layout::RowMajor, layout::RowMajor,
 
     /// Underlying mathematical operator
     using Operator = arch::OpMultiplyAdd;
+
+    static_assert(!(Shape::kN % 2),
+                  "Mma_HFMA2 requires the N dimension to be divisible by 2.");
 
     //
     // Methods
@@ -610,10 +635,10 @@ struct Mma_HFMA2<Shape, layout::RowMajor, layout::RowMajor, layout::RowMajor,
 // Specialization for TNT + Inner Product  or 1x1x2K + LayoutC = T //
 /////////////////////////////////////////////////////////////////////
 
-template <typename Shape, typename LayoutA, typename LayoutB>
-struct Mma_HFMA2<Shape, LayoutA, LayoutB, layout::RowMajor, false> {
-    static_assert(!(Shape::kK % 2),
-                  "Mma_HFMA2 requires the K dimension to be divisible by 2.");
+template <typename Shape_, typename LayoutA, typename LayoutB>
+struct Mma_HFMA2<Shape_, LayoutA, LayoutB, layout::RowMajor, false> {
+    /// Size of the Gemm problem - concept: gemm::GemmShape<>
+    using Shape = Shape_;
 
     /// A operand storage
     using FragmentA = Array<half_t, Shape::kMK>;
@@ -626,6 +651,9 @@ struct Mma_HFMA2<Shape, LayoutA, LayoutB, layout::RowMajor, false> {
 
     /// Underlying mathematical operator
     using Operator = arch::OpMultiplyAdd;
+
+    static_assert(!(Shape::kK % 2),
+                  "Mma_HFMA2 requires the K dimension to be divisible by 2.");
 
     //
     // Methods
@@ -682,10 +710,10 @@ struct Mma_HFMA2<Shape, LayoutA, LayoutB, layout::RowMajor, false> {
 // Specialization for TNN + Inner Product  or 1x1x2K + LayoutC = N //
 /////////////////////////////////////////////////////////////////////
 
-template <typename Shape, typename LayoutA, typename LayoutB>
-struct Mma_HFMA2<Shape, LayoutA, LayoutB, layout::ColumnMajor, false> {
-    static_assert(!(Shape::kK % 2),
-                  "Mma_HFMA2 requires the K dimension to be divisible by 2.");
+template <typename Shape_, typename LayoutA, typename LayoutB>
+struct Mma_HFMA2<Shape_, LayoutA, LayoutB, layout::ColumnMajor, false> {
+    /// Size of the Gemm problem - concept: gemm::GemmShape<>
+    using Shape = Shape_;
 
     /// A operand storage
     using FragmentA = Array<half_t, Shape::kMK>;
@@ -698,6 +726,9 @@ struct Mma_HFMA2<Shape, LayoutA, LayoutB, layout::ColumnMajor, false> {
 
     /// Underlying mathematical operator
     using Operator = arch::OpMultiplyAdd;
+
+    static_assert(!(Shape::kK % 2),
+                  "Mma_HFMA2 requires the K dimension to be divisible by 2.");
 
     //
     // Methods

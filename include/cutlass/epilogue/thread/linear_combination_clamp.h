@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2022, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -45,6 +45,17 @@ namespace thread {
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
+namespace detail {
+
+/// Single source of truth for whether to unroll for `LinearCombinationClamp()`
+constexpr bool LinearCombinationClampIsHeavy() {
+    return false;
+}
+
+}  // namespace detail
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
 /// Applies a linear combination operator to an array of elements then clamps
 /// the output before converting to the output element type.
 ///
@@ -53,11 +64,16 @@ namespace thread {
 template <typename ElementOutput_,  ///< Data type used to load and store
                                     ///< tensors
           int Count,  ///< Number of elements computed per operation
+                      ///< Usually it is 128/sizeof_bits<ElementOutput_>,
+                      ///< but we use 64 or 32 sometimes when there are not
+                      ///< enough data to store
           typename ElementAccumulator_ =
                   ElementOutput_,  ///< Accumulator data type
           typename ElementCompute_ =
                   ElementOutput_,  ///< Data type used to compute linear
                                    ///< combination
+          ScaleType::Kind Scale =
+                  ScaleType::Default,  ///< Control Alpha and Beta scaling
           FloatRoundStyle Round = FloatRoundStyle::round_to_nearest>
 class LinearCombinationClamp {
 public:
@@ -72,6 +88,8 @@ public:
     using ComputeFragment = Array<ElementCompute, kCount>;
 
     static FloatRoundStyle const kRound = Round;
+
+    static bool const kIsHeavy = detail::LinearCombinationClampIsHeavy();
 
     /// Host-constructable parameters structure
     struct Params {
@@ -101,8 +119,19 @@ public:
                   beta_ptr(nullptr) {}
 
         CUTLASS_HOST_DEVICE
+        Params(ElementCompute alpha)
+                : alpha(alpha),
+                  beta(0),
+                  alpha_ptr(nullptr),
+                  beta_ptr(nullptr) {}
+
+        CUTLASS_HOST_DEVICE
         Params(ElementCompute const* alpha_ptr, ElementCompute const* beta_ptr)
                 : alpha(0), beta(0), alpha_ptr(alpha_ptr), beta_ptr(beta_ptr) {}
+
+        CUTLASS_HOST_DEVICE
+        Params(ElementCompute const* alpha_ptr)
+                : alpha(0), beta(0), alpha_ptr(alpha_ptr), beta_ptr(nullptr) {}
     };
 
 private:
@@ -124,7 +153,18 @@ public:
 
     /// Returns true if source is needed
     CUTLASS_HOST_DEVICE
-    bool is_source_needed() const { return beta_ != ElementCompute(0); }
+    bool is_source_needed() const {
+        if (Scale == ScaleType::NoBetaScaling)
+            return true;
+
+        if (Scale == ScaleType::OnlyAlphaScaling)
+            return false;
+
+        if (Scale == ScaleType::Nothing)
+            return false;
+
+        return beta_ != ElementCompute(0);
+    }
 
     /// Functionally required for serial reduction in the epilogue
     CUTLASS_HOST_DEVICE
@@ -160,19 +200,30 @@ public:
         minimum<ComputeFragment> min_accumulator;
         maximum<ComputeFragment> max_accumulator;
 
-        intermediate = mul_add_source(
-                beta_, converted_source);  // X =  beta * C + uniform
-        intermediate =
-                mul_add_accumulator(alpha_, converted_accumulator,
-                                    intermediate);  // D = alpha * Accum + X
+        if (Scale == ScaleType::NoBetaScaling) {
+            intermediate = converted_source;
+            intermediate =
+                    mul_add_accumulator(alpha_, converted_accumulator,
+                                        intermediate);  // D = alpha * Accum + X
+        } else if (Scale == ScaleType::Nothing) {
+            intermediate = converted_accumulator;
+        } else {
+            intermediate = mul_add_source(
+                    beta_, converted_source);  // X =  beta * C + uniform
+            intermediate =
+                    mul_add_accumulator(alpha_, converted_accumulator,
+                                        intermediate);  // D = alpha * Accum + X
+        }
 
         /// Clamping constant value
-        ElementCompute const kClamp = ElementCompute(
-                (1U << (sizeof_bits<ElementOutput>::value - 1)) - 1);
+        ElementCompute const kClampMax =
+                ElementCompute(platform::numeric_limits<ElementOutput>::max());
 
-        intermediate =
-                max_accumulator(intermediate, -kClamp - ElementCompute(1));
-        intermediate = min_accumulator(intermediate, kClamp);
+        ElementCompute const kClampMin = ElementCompute(
+                platform::numeric_limits<ElementOutput>::lowest());
+
+        intermediate = max_accumulator(intermediate, kClampMin);
+        intermediate = min_accumulator(intermediate, kClampMax);
 
         // Convert to destination numeric type
         NumericArrayConverter<ElementOutput, ElementCompute, kCount, Round>
@@ -200,16 +251,22 @@ public:
         minimum<ComputeFragment> min_accumulator;
         maximum<ComputeFragment> max_accumulator;
 
-        intermediate = mul_accumulator(
-                alpha_, converted_accumulator);  // D = alpha * Accum
+        if (Scale == ScaleType::Nothing) {
+            intermediate = converted_accumulator;
+        } else {
+            intermediate = mul_accumulator(
+                    alpha_, converted_accumulator);  // D = alpha * Accum
+        }
 
         /// Clamping constant value
-        ElementCompute const kClamp = ElementCompute(
-                (1U << (sizeof_bits<ElementOutput>::value - 1)) - 1);
+        ElementCompute const kClampMax =
+                ElementCompute(platform::numeric_limits<ElementOutput>::max());
 
-        intermediate =
-                max_accumulator(intermediate, -kClamp - ElementCompute(1));
-        intermediate = min_accumulator(intermediate, kClamp);
+        ElementCompute const kClampMin = ElementCompute(
+                platform::numeric_limits<ElementOutput>::lowest());
+
+        intermediate = max_accumulator(intermediate, kClampMin);
+        intermediate = min_accumulator(intermediate, kClampMax);
 
         // Convert to destination numeric type
         NumericArrayConverter<ElementOutput, ElementCompute, kCount, Round>
@@ -233,26 +290,17 @@ public:
 ///
 template <typename ElementOutput_,  ///< Data type used to load and store
                                     ///< tensors
-          int Count,  ///< Number of elements computed per operation
+          int Count,              ///< Number of elements computed per operation
+          ScaleType::Kind Scale,  ///< Control Alpha and Beta scaling
           FloatRoundStyle Round>
-class LinearCombinationClamp<ElementOutput_, Count, int, float, Round> {
+class LinearCombinationClamp<ElementOutput_, Count, int, float, Scale, Round> {
 public:
     using ElementOutput = ElementOutput_;
     using ElementAccumulator = int;
     using ElementCompute = float;
 
-    static_assert(
-            platform::is_same<ElementOutput, int32_t>::value ||
-                    platform::is_same<ElementOutput, uint32_t>::value ||
-                    platform::is_same<ElementOutput, int16_t>::value ||
-                    platform::is_same<ElementOutput, uint16_t>::value ||
-                    platform::is_same<ElementOutput, int8_t>::value ||
-                    platform::is_same<ElementOutput, uint8_t>::value ||
-                    platform::is_same<ElementOutput, cutlass::int4b_t>::value ||
-                    platform::is_same<ElementOutput,
-                                      cutlass::uint4b_t>::value ||
-                    platform::is_same<ElementOutput, cutlass::uint1b_t>::value,
-            "This elementwise op expects the output to be int.");
+    static_assert(platform::numeric_limits<ElementOutput>::is_integer,
+                  "This elementwise op expects the output to be int.");
 
     static int const kCount = Count;
 
@@ -261,6 +309,8 @@ public:
     using ComputeFragment = Array<ElementCompute, kCount>;
 
     static FloatRoundStyle const kRound = Round;
+
+    static bool const kIsHeavy = detail::LinearCombinationClampIsHeavy();
 
     /// Host-constructable parameters structure
     struct Params {
@@ -290,8 +340,19 @@ public:
                   beta_ptr(nullptr) {}
 
         CUTLASS_HOST_DEVICE
+        Params(ElementCompute alpha)
+                : alpha(alpha),
+                  beta(0),
+                  alpha_ptr(nullptr),
+                  beta_ptr(nullptr) {}
+
+        CUTLASS_HOST_DEVICE
         Params(ElementCompute const* alpha_ptr, ElementCompute const* beta_ptr)
                 : alpha(0), beta(0), alpha_ptr(alpha_ptr), beta_ptr(beta_ptr) {}
+
+        CUTLASS_HOST_DEVICE
+        Params(ElementCompute const* alpha_ptr)
+                : alpha(0), beta(0), alpha_ptr(alpha_ptr), beta_ptr(nullptr) {}
     };
 
 private:
@@ -313,7 +374,18 @@ public:
 
     /// Returns true if source is needed
     CUTLASS_HOST_DEVICE
-    bool is_source_needed() const { return beta_ != ElementCompute(0); }
+    bool is_source_needed() const {
+        if (Scale == ScaleType::NoBetaScaling)
+            return true;
+
+        if (Scale == ScaleType::OnlyAlphaScaling)
+            return false;
+
+        if (Scale == ScaleType::Nothing)
+            return false;
+
+        return beta_ != ElementCompute(0);
+    }
 
     /// Functionally required for serial reduction in the epilogue
     CUTLASS_HOST_DEVICE
@@ -346,19 +418,28 @@ public:
         multiply_add<ComputeFragment> mul_add_accumulator;
 
         // Float min-max
-        intermediate = mul_add_source(
-                beta_, converted_source);  // X =  beta * C + uniform
-        intermediate =
-                mul_add_accumulator(alpha_, converted_accumulator,
-                                    intermediate);  // D = alpha * Accum + X
+        if (Scale == ScaleType::NoBetaScaling) {
+            intermediate = converted_source;
+            intermediate =
+                    mul_add_accumulator(alpha_, converted_accumulator,
+                                        intermediate);  // D = alpha * Accum + X
+        } else if (Scale == ScaleType::Nothing) {
+            intermediate = converted_accumulator;
+        } else {
+            intermediate = mul_add_source(
+                    beta_, converted_source);  // X =  beta * C + uniform
+            intermediate =
+                    mul_add_accumulator(alpha_, converted_accumulator,
+                                        intermediate);  // D = alpha * Accum + X
+        }
 
         // Convert floats back to INT
         FragmentAccumulator scaled_accumulator;
 
-        CUTLASS_PRAGMA_UNROLL
-        for (int i = 0; i < kCount; ++i) {
-            scaled_accumulator[i] = __float2int_rn(intermediate[i]);
-        }
+        NumericArrayConverter<int, ElementCompute, kCount, Round>
+                compute_converter;
+
+        scaled_accumulator = compute_converter(intermediate);
 
         // Convert to destination numeric type
         NumericArrayConverter<ElementOutput, int, kCount, Round>
@@ -383,16 +464,20 @@ public:
         multiplies<ComputeFragment> mul_add_accumulator;
 
         // Float min-max
-        intermediate = mul_add_accumulator(
-                alpha_, converted_accumulator);  // D = alpha * Accum
+        if (Scale == ScaleType::Nothing) {
+            intermediate = converted_accumulator;
+        } else {
+            intermediate = mul_add_accumulator(
+                    alpha_, converted_accumulator);  // D = alpha * Accum
+        }
 
         // Convert floats back to INT
         FragmentAccumulator scaled_accumulator;
 
-        CUTLASS_PRAGMA_UNROLL
-        for (int i = 0; i < kCount; ++i) {
-            scaled_accumulator[i] = __float2int_rn(intermediate[i]);
-        }
+        NumericArrayConverter<int, ElementCompute, kCount, Round>
+                compute_converter;
+
+        scaled_accumulator = compute_converter(intermediate);
 
         // Convert to destination numeric type
         NumericArrayConverter<ElementOutput, int, kCount, Round>
@@ -421,6 +506,8 @@ template <
         typename ElementOutput_,
         /// Number of elements computed per operation
         int Count,
+        ///< Control Alpha and Beta scaling
+        ScaleType::Kind Scale = ScaleType::Default,
         /// Rounding mode
         FloatRoundStyle Round = FloatRoundStyle::round_to_nearest>
 class FastLinearCombinationClamp {
@@ -429,18 +516,8 @@ public:
     using ElementAccumulator = int;
     using ElementCompute = float;
 
-    static_assert(
-            platform::is_same<ElementOutput, int32_t>::value ||
-                    platform::is_same<ElementOutput, uint32_t>::value ||
-                    platform::is_same<ElementOutput, int16_t>::value ||
-                    platform::is_same<ElementOutput, uint16_t>::value ||
-                    platform::is_same<ElementOutput, int8_t>::value ||
-                    platform::is_same<ElementOutput, uint8_t>::value ||
-                    platform::is_same<ElementOutput, cutlass::int4b_t>::value ||
-                    platform::is_same<ElementOutput,
-                                      cutlass::uint4b_t>::value ||
-                    platform::is_same<ElementOutput, cutlass::uint1b_t>::value,
-            "This elementwise op expects the output to be int.");
+    static_assert(platform::numeric_limits<ElementOutput>::is_integer,
+                  "This elementwise op expects the output to be int.");
 
     static int const kCount = Count;
 
@@ -449,6 +526,8 @@ public:
     using ComputeFragment = Array<ElementCompute, kCount>;
 
     static FloatRoundStyle const kRound = Round;
+
+    static bool const kIsHeavy = false;
 
     /// Host-constructable parameters structure
     struct Params {
@@ -480,8 +559,19 @@ public:
                   beta_ptr(nullptr) {}
 
         CUTLASS_HOST_DEVICE
+        Params(ElementCompute alpha)
+                : alpha(alpha),
+                  beta(0),
+                  alpha_ptr(nullptr),
+                  beta_ptr(nullptr) {}
+
+        CUTLASS_HOST_DEVICE
         Params(ElementCompute const* alpha_ptr, ElementCompute const* beta_ptr)
                 : alpha(0), beta(0), alpha_ptr(alpha_ptr), beta_ptr(beta_ptr) {}
+
+        CUTLASS_HOST_DEVICE
+        Params(ElementCompute const* alpha_ptr)
+                : alpha(0), beta(0), alpha_ptr(alpha_ptr), beta_ptr(nullptr) {}
     };
 
 private:
@@ -503,7 +593,18 @@ public:
 
     /// Returns true if source is needed
     CUTLASS_HOST_DEVICE
-    bool is_source_needed() const { return beta_ != ElementCompute(0); }
+    bool is_source_needed() const {
+        if (Scale == ScaleType::NoBetaScaling)
+            return true;
+
+        if (Scale == ScaleType::OnlyAlphaScaling)
+            return false;
+
+        if (Scale == ScaleType::Nothing)
+            return false;
+
+        return beta_ != ElementCompute(0);
+    }
 
     /// Functionally required for serial reduction in the epilogue
     CUTLASS_HOST_DEVICE
@@ -540,21 +641,28 @@ public:
         maximum<ComputeFragment> max_accumulator;
 
         // Float min-max
-        intermediate = mul_add_source(
-                beta_, converted_source);  // X =  beta * C + uniform
-        intermediate =
-                mul_add_accumulator(alpha_, converted_accumulator,
-                                    intermediate);  // D = alpha * Accum + X
+        if (Scale == ScaleType::NoBetaScaling) {
+            intermediate = converted_source;
+            intermediate =
+                    mul_add_accumulator(alpha_, converted_accumulator,
+                                        intermediate);  // D = alpha * Accum + X
+        } else if (Scale == ScaleType::Nothing) {
+            intermediate = converted_accumulator;
+        } else {
+            intermediate = mul_add_source(
+                    beta_, converted_source);  // X =  beta * C + uniform
+            intermediate =
+                    mul_add_accumulator(alpha_, converted_accumulator,
+                                        intermediate);  // D = alpha * Accum + X
+        }
 
         /// Clamping constant value
-        ElementCompute const kClampMax =
-                ElementCompute(platform::numeric_limits<ElementOutput>::max());
+        ElementCompute const kClamp =
+                ElementCompute(1 << (sizeof_bits<ElementOutput>::value - 1));
 
-        ElementCompute const kClampMin = ElementCompute(
-                platform::numeric_limits<ElementOutput>::lowest());
-
-        intermediate = max_accumulator(intermediate, kClampMin);
-        intermediate = min_accumulator(intermediate, kClampMax);
+        intermediate = max_accumulator(intermediate, -kClamp);
+        intermediate =
+                min_accumulator(intermediate, kClamp - ElementCompute(1));
 
         // Convert to destination numeric type
         FastNumericArrayConverter<ElementOutput, ElementCompute, kCount, Round>
@@ -583,17 +691,19 @@ public:
         maximum<ComputeFragment> max_accumulator;
 
         // Float min-max
-        intermediate = mul_accumulator(alpha_, converted_accumulator);
+        if (Scale == ScaleType::Nothing) {
+            intermediate = converted_accumulator;
+        } else {
+            intermediate = mul_accumulator(alpha_, converted_accumulator);
+        }
 
         /// Clamping constant value
-        ElementCompute const kClampMax =
-                ElementCompute(platform::numeric_limits<ElementOutput>::max());
+        ElementCompute const kClamp =
+                ElementCompute(1 << (sizeof_bits<ElementOutput>::value - 1));
 
-        ElementCompute const kClampMin = ElementCompute(
-                platform::numeric_limits<ElementOutput>::lowest());
-
-        intermediate = max_accumulator(intermediate, kClampMin);
-        intermediate = min_accumulator(intermediate, kClampMax);
+        intermediate = max_accumulator(intermediate, -kClamp);
+        intermediate =
+                min_accumulator(intermediate, kClamp - ElementCompute(1));
 
         // Convert to destination numeric type
         FastNumericArrayConverter<ElementOutput, ElementCompute, kCount, Round>

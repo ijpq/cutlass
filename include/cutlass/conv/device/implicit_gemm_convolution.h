@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -74,9 +74,12 @@ public:
             ImplicitGemmKernel::kConvolutionalOperator;
     static cutlass::conv::IteratorAlgorithm const kIteratorAlgorithm =
             ImplicitGemmKernel::kIteratorAlgorithm;
+    static cutlass::conv::StrideSupport const kStrideSupport =
+            ImplicitGemmKernel::kStrideSupport;
 
     static int const kWarpCount = (ThreadblockShape::kM / WarpShape::kM) *
-                                  (ThreadblockShape::kN / WarpShape::kN);
+                                  (ThreadblockShape::kN / WarpShape::kN) *
+                                  (ThreadblockShape::kK / WarpShape::kK);
 
     /// Argument structure
     using Arguments = typename ImplicitGemmKernel::Arguments;
@@ -102,6 +105,45 @@ public:
                 args.problem_size);
         if (Status::kSuccess != status) {
             return status;
+        }
+
+        static int const kAlignmentC = ImplicitGemmKernel::Epilogue::
+                OutputTileIterator::kElementsPerAccess;
+        if (kConvolutionalOperator == conv::Operator::kFprop) {
+            if (args.problem_size.K % kAlignmentC)
+                return Status::kErrorMisalignedOperand;
+        } else if (kConvolutionalOperator == conv::Operator::kDgrad) {
+            if (args.problem_size.C % kAlignmentC)
+                return Status::kErrorMisalignedOperand;
+        } else if (kConvolutionalOperator == conv::Operator::kWgrad) {
+            if (args.problem_size.C % kAlignmentC)
+                return Status::kErrorMisalignedOperand;
+        }
+
+        // check for unsupported problem sizes for strided dgrad implementation
+        if (kConvolutionalOperator == conv::Operator::kDgrad &&
+            kStrideSupport == conv::StrideSupport::kStrided) {
+            // Unity stride (1x1) is supported by strided dgrad but disabled for
+            // performance reasons. For unity stride, use strided dgrad
+            // optimized unity stride specialization. Note that unit tests
+            // strided dgrad for unity stride to make sure that strided dgrad
+            // implemetnation is functionaly sound. Strided dgrad implementation
+            // also support mixed strides, i.e., (1x2) and (2x1)
+            if (args.problem_size.stride_h == 1 &&
+                args.problem_size.stride_w == 1) {
+                return Status::kErrorNotSupported;
+            }
+
+            // split-k (serial or parallel) is not supported for strided dgrad
+            if (args.problem_size.split_k_slices > 1) {
+                return Status::kErrorNotSupported;
+            }
+
+            // dilation > {1x1} is not supported for strided dgrad
+            if (args.problem_size.dilation_h > 1 ||
+                args.problem_size.dilation_w > 1) {
+                return Status::kErrorNotSupported;
+            }
         }
 
         // Determine grid shape
@@ -191,14 +233,6 @@ public:
             if (result != cudaSuccess) {
                 return Status::kErrorInternal;
             }
-
-            result = cudaFuncSetAttribute(
-                    cutlass::Kernel<ImplicitGemmKernel>,
-                    cudaFuncAttributePreferredSharedMemoryCarveout, 100);
-
-            if (result != cudaSuccess) {
-                return Status::kErrorInternal;
-            }
         }
 
         return Status::kSuccess;
@@ -242,7 +276,7 @@ public:
     /// Runs the kernel using initialized state.
     Status operator()(Arguments const& args, void* workspace = nullptr,
                       cudaStream_t stream = nullptr) {
-        Status status = initialize(args, workspace);
+        Status status = initialize(args, workspace, stream);
 
         if (status == Status::kSuccess) {
             status = run(stream);

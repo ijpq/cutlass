@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -29,6 +29,10 @@
     \brief Boost-like numeric conversion operator for CUTLASS numeric types
 */
 #pragma once
+
+#if !defined(__CUDACC_RTC__)
+#include <cfenv>
+#endif
 
 #include "cutlass/cutlass.h"
 #include "cutlass/numeric_types.h"
@@ -51,8 +55,8 @@ enum class FloatRoundStyle {
     round_toward_neg_infinity,  ///< round toward negative infinity
     round_half_ulp_truncate,    ///< add 0.5ulp to integer representation then
                                 ///< round toward zero
-    round_half_ulp_trunc_dntz,  ///< like round_half_ulp_truncate, except
-                                ///< denorms are rounded *toward* zero
+    round_half_ulp_trunc_dntz,  ///< like round_half_ulp_truncate, except denorms
+                                ///< are rounded *toward* zero
     round_to_nearest_integer,   ///< cvt.rni
 
 };
@@ -77,9 +81,155 @@ struct NumericConverter {
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 //
+// Partial specializations for float => int32_t
+//
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
+#if defined(__CUDA_ARCH__)
+template <>
+struct NumericConverter<int32_t, float, FloatRoundStyle::round_to_nearest> {
+    using result_type = int32_t;
+    using source_type = float;
+    static FloatRoundStyle const round_style =
+            FloatRoundStyle::round_to_nearest;
+
+    CUTLASS_DEVICE
+    static result_type convert(source_type const& s) {
+        return __float2int_rn(s);
+    }
+
+    CUTLASS_DEVICE
+    result_type operator()(source_type const& s) { return convert(s); }
+};
+
+template <>
+struct NumericConverter<int32_t, float, FloatRoundStyle::round_toward_zero> {
+    using result_type = int32_t;
+    using source_type = float;
+    static FloatRoundStyle const round_style =
+            FloatRoundStyle::round_toward_zero;
+
+    CUTLASS_DEVICE
+    static result_type convert(source_type const& s) {
+        return __float2int_rz(s);
+    }
+
+    CUTLASS_DEVICE
+    result_type operator()(source_type const& s) { return convert(s); }
+};
+
+#elif !defined(__CUDACC_RTC__)
+
+template <>
+struct NumericConverter<int32_t, float, FloatRoundStyle::round_to_nearest> {
+    using result_type = int32_t;
+    using source_type = float;
+    static FloatRoundStyle const round_style =
+            FloatRoundStyle::round_to_nearest;
+
+    static result_type convert(source_type const& s) {
+        std::fesetround(FE_TONEAREST);
+        return (result_type)std::nearbyint(s);
+    }
+
+    result_type operator()(source_type const& s) { return convert(s); }
+};
+
+template <>
+struct NumericConverter<int32_t, float, FloatRoundStyle::round_toward_zero> {
+    using result_type = int32_t;
+    using source_type = float;
+    static FloatRoundStyle const round_style =
+            FloatRoundStyle::round_toward_zero;
+
+    static result_type convert(source_type const& s) {
+        std::fesetround(FE_TOWARDZERO);
+        return (result_type)std::nearbyint(s);
+    }
+
+    result_type operator()(source_type const& s) { return convert(s); }
+};
+#endif
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+//
 // Partial specializations for float => int8_t
 //
 /////////////////////////////////////////////////////////////////////////////////////////////////
+
+#if defined(__CUDA_ARCH__)
+template <>
+struct NumericConverter<int8_t, float, FloatRoundStyle::round_to_nearest> {
+    using result_type = int8_t;
+    using source_type = float;
+    static FloatRoundStyle const round_style =
+            FloatRoundStyle::round_to_nearest;
+
+    CUTLASS_DEVICE
+    static result_type convert(source_type const& s) {
+        int32_t intermediate = __float2int_rn(s);
+
+        return static_cast<result_type>(intermediate);
+    }
+
+    CUTLASS_DEVICE
+    result_type operator()(source_type const& s) { return convert(s); }
+};
+
+template <>
+struct NumericConverter<int8_t, float, FloatRoundStyle::round_toward_zero> {
+    using result_type = int8_t;
+    using source_type = float;
+    static FloatRoundStyle const round_style =
+            FloatRoundStyle::round_toward_zero;
+
+    CUTLASS_DEVICE
+    static result_type convert(source_type const& s) {
+        int32_t intermediate = __float2int_rz(s);
+
+        return static_cast<result_type>(intermediate);
+    }
+
+    CUTLASS_DEVICE
+    result_type operator()(source_type const& s) { return convert(s); }
+};
+
+#elif !defined(__CUDACC_RTC__)
+
+template <>
+struct NumericConverter<int8_t, float, FloatRoundStyle::round_to_nearest> {
+    using result_type = int8_t;
+    using source_type = float;
+    static FloatRoundStyle const round_style =
+            FloatRoundStyle::round_to_nearest;
+
+    static result_type convert(source_type const& s) {
+        std::fesetround(FE_TONEAREST);
+        int32_t intermediate = (result_type)std::nearbyint(s);
+        return static_cast<result_type>(intermediate);
+    }
+
+    result_type operator()(source_type const& s) { return convert(s); }
+};
+
+template <>
+struct NumericConverter<int8_t, float, FloatRoundStyle::round_toward_zero> {
+    using result_type = int8_t;
+    using source_type = float;
+    static FloatRoundStyle const round_style =
+            FloatRoundStyle::round_toward_zero;
+
+    static result_type convert(source_type const& s) {
+        std::fesetround(FE_TOWARDZERO);
+        int32_t intermediate = (result_type)std::nearbyint(s);
+        return static_cast<result_type>(intermediate);
+    }
+
+    result_type operator()(source_type const& s) { return convert(s); }
+};
+
+#endif
+
 template <FloatRoundStyle Round>
 struct NumericConverter<int8_t, float, Round> {
     using result_type = int8_t;
@@ -96,6 +246,8 @@ struct NumericConverter<int8_t, float, Round> {
     CUTLASS_HOST_DEVICE
     result_type operator()(source_type const& s) { return convert(s); }
 };
+
+
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -427,6 +579,43 @@ struct NumericConverter<tfloat32_t, float, FloatRoundStyle::round_toward_zero> {
     static result_type convert(source_type const& s) {
         uint32_t x = reinterpret_cast<uint32_t const&>(s);
         return tfloat32_t::bitcast(x & 0xffffe000);
+    }
+
+    CUTLASS_HOST_DEVICE
+    result_type operator()(source_type const& s) { return convert(s); }
+};
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Conversion operator for float to tfloat32_t big and small values
+//
+/////////////////////////////////////////////////////////////////////////////////////////////////
+template <FloatRoundStyle RoundBig = FloatRoundStyle::round_toward_zero,
+          FloatRoundStyle RoundSmall = FloatRoundStyle::round_half_ulp_truncate>
+struct NumericConverterFastF32 {
+    // result_type holds big tfloat32_t at idx(0) and small tfloat32_t at idx(1)
+    using result_type = Array<tfloat32_t, 2>;
+
+    // source data type
+    using source_type = float;
+
+    // rounding styles for big and small part
+    static FloatRoundStyle const kRoundBig = RoundBig;
+    static FloatRoundStyle const kRoundSmall = RoundSmall;
+
+    CUTLASS_HOST_DEVICE
+    static result_type convert(source_type const& source) {
+        result_type result;
+        NumericConverter<tfloat32_t, float, kRoundBig> convert_big_;
+        NumericConverter<tfloat32_t, float, kRoundSmall> convert_small_;
+
+        // convert and fill tfloat32_t big at idx 0
+        result[0] = convert_big_(source);
+
+        // convert and fill tfloat32_t small at idx 1
+        result[1] = convert_small_(source - static_cast<float>(result[0]));
+
+        return result;
     }
 
     CUTLASS_HOST_DEVICE
@@ -1699,59 +1888,58 @@ struct PreferredRoundingMode<tfloat32_t, float> {
 //
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
-/// Conversion operator for Array
-template <typename T, typename S, int N,
-          FloatRoundStyle Round = FloatRoundStyle::round_to_nearest>
-struct LinearCombinationClampArrayConverter;
+/// Packs predicates into an array.
+template <int N>
+struct PackPredicates {
+    using result_type = Array<uint1b_t, N>;
 
-template <int N, FloatRoundStyle Round>
-struct LinearCombinationClampArrayConverter<int8_t, uint8_t, N, Round> {
-    using T = int8_t;
-    using S = uint8_t;
-    using ElementCompute = float;
-    using result_type = Array<T, N>;
-    using source_type = Array<S, N>;
-    static FloatRoundStyle const round_style = Round;
-
-    struct Params {
-        ElementCompute alpha_;
-        ElementCompute beta_;
-
-        CUTLASS_HOST_DEVICE
-        Params() : alpha_(1), beta_(0) {}
-
-        CUTLASS_HOST_DEVICE
-        Params(ElementCompute alpha, ElementCompute beta)
-                : alpha_(alpha), beta_(beta) {}
-    };
-
-    Params const& params_;
+    static_assert(!(N % 4),
+                  "Must pack predicates in a count that is a multiple of 4");
 
     CUTLASS_HOST_DEVICE
-    LinearCombinationClampArrayConverter() : params_(Params()) {}
+    result_type operator()(bool const predicates[]) {
+        result_type packed;
+        packed.clear();
 
-    CUTLASS_HOST_DEVICE
-    LinearCombinationClampArrayConverter(Params const& params)
-            : params_(params) {}
-
-    CUTLASS_HOST_DEVICE
-    result_type convert(source_type const& s) {
-        result_type result;
-        NumericConverter<T, ElementCompute, Round> convert_;
+        int const kWordSize = 8;
+        uint8_t* bytes = reinterpret_cast<uint8_t*>(packed.data());
 
         CUTLASS_PRAGMA_UNROLL
         for (int i = 0; i < N; ++i) {
-            ElementCompute intermediate =
-                    params_.alpha_ * ElementCompute(s[i]) - params_.beta_;
-            result[i] = convert_(intermediate);
-        }
+            int word_idx = (i / kWordSize);
+            int bit_idx = (i % kWordSize);
 
-        return result;
+            uint8_t mask = ((predicates[i] ? 1u : 0u) << bit_idx);
+            bytes[word_idx] = (bytes[word_idx] | mask);
+        }
+        return packed;
     }
+};
+
+/// Packs predicates into an array
+template <int N>
+struct UnpackPredicates {
+    using result_type = Array<uint1b_t, N>;
+
+    static_assert(!(N % 4),
+                  "Must unpack predicates in a count that is a multiple of 4");
 
     CUTLASS_HOST_DEVICE
-    result_type operator()(source_type const& s) { return convert(s); }
+    void operator()(bool predicates[], result_type const& packed) {
+        int const kWordSize = 8;
+        uint8_t const* bytes = reinterpret_cast<uint8_t const*>(packed.data());
+
+        CUTLASS_PRAGMA_UNROLL
+        for (int i = 0; i < N; ++i) {
+            int word_idx = (i / kWordSize);
+            int bit_idx = (i % kWordSize);
+
+            predicates[i] = bool((bytes[word_idx] >> bit_idx) & 0x1);
+        }
+    }
 };
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
 
 }  // namespace cutlass
 

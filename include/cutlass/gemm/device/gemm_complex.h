@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -140,7 +140,9 @@ namespace device {
       /// Operator class tag
       typename OperatorClass,
 
-      /// Tag indicating architecture to tune for
+      /// Tag indicating architecture to tune for.  This is the minimum SM that
+      /// supports the intended feature. The device kernel can be built
+      /// targeting any SM larger than this number.
       typename ArchTag,
 
       /// Threadblock-level tile size (concept: GemmShape)
@@ -180,7 +182,7 @@ template <
         typename ElementAccumulator_ = ElementC_,
         /// Operator class tag
         typename OperatorClass_ = arch::OpClassSimt,
-        /// Tag indicating architecture to tune for
+        /// Tag indicating architecture to tune for.
         typename ArchTag_ = arch::Sm70,
         /// Threadblock-level tile size (concept: GemmShape)
         typename ThreadblockShape_ = typename DefaultGemmConfiguration<
@@ -412,14 +414,6 @@ public:
             if (result != cudaSuccess) {
                 return Status::kErrorInternal;
             }
-
-            result = cudaFuncSetAttribute(
-                    Kernel<GemmKernel>,
-                    cudaFuncAttributePreferredSharedMemoryCarveout, 100);
-
-            if (result != cudaSuccess) {
-                return Status::kErrorInternal;
-            }
         }
 
         cutlass::Kernel<GemmKernel>
@@ -631,7 +625,7 @@ public:
     /// Runs the kernel using initialized state.
     Status operator()(Arguments const& args, void* workspace = nullptr,
                       cudaStream_t stream = nullptr) {
-        Status status = initialize(args, workspace);
+        Status status = initialize(args, workspace, stream);
 
         if (status == Status::kSuccess) {
             status = run(stream);

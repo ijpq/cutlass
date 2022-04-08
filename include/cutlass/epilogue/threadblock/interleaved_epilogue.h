@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -253,6 +253,31 @@ private:
             // Call the output operator
             output_frag_ptr[i] =
                     output_op(compute_frag_ptr[i], source_frag_ptr[i]);
+        }
+    }
+
+    /// Helper to invoke the output functor over each vector of output
+    CUTLASS_DEVICE
+    void apply_output_operator_source_not_needed_(
+            OutputOp const& output_op,  ///< Output operator
+            typename OutputTileIterator::Fragment& output_fragment,
+            typename AccumulatorFragmentIterator::Fragment const&
+                    aligned_accum_fragment) {
+        OutputAccessType* output_frag_ptr =
+                reinterpret_cast<OutputAccessType*>(&output_fragment);
+
+        AccumulatorAccessType const* compute_frag_ptr =
+                reinterpret_cast<AccumulatorAccessType const*>(
+                        &aligned_accum_fragment);
+
+        int const kOutputOpIterations =
+                OutputTileIterator::Fragment::kElements /
+                OutputTileIterator::kElementsPerAccess;
+
+        CUTLASS_PRAGMA_UNROLL
+        for (int i = 0; i < kOutputOpIterations; ++i) {
+            // Call the output operator
+            output_frag_ptr[i] = output_op(compute_frag_ptr[i]);
         }
     }
 };

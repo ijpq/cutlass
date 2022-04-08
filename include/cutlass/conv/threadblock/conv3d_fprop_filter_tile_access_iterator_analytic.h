@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -48,6 +48,7 @@
 #include "cutlass/layout/matrix.h"
 #include "cutlass/conv/convolution.h"
 #include "cutlass/conv/conv3d_problem_size.h"
+#include "cutlass/conv/threadblock/conv3d_params.h"
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -78,6 +79,7 @@ public:
     static StrideSupport const kStrideSupport = conv::StrideSupport::kStrided;
     static int const kConvDim = 3;
     using ConvProblemSize = typename conv::Conv3dProblemSize;
+    static int const kAccessesPerVector = 1;
 
     //
     // Simplifying assertions
@@ -89,19 +91,7 @@ public:
     // Parameters structure
     //
 
-    struct Params {
-        Layout layout;
-
-        //
-        // Methods
-        //
-        CUTLASS_HOST_DEVICE
-        Params() {}
-
-        CUTLASS_HOST_DEVICE
-        Params(ConvProblemSize const& problem_size, Layout const& layout)
-                : layout(layout) {}
-    };
+    using Params = Conv3dAnalyticParams<Layout>;
 
 private:
     Params const& params_;

@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -43,10 +43,6 @@ namespace cutlass {
 template <typename T, int N>
 class Array<T, N, false> {
 public:
-    static_assert(sizeof_bits<T>::value * N >= 8,
-                  "Array<> specialized for sub-byte types assume the actual "
-                  "stored element size is 1 byte");
-
     static int const kSizeBits = sizeof_bits<T>::value * N;
 
     /// Storage type
@@ -61,7 +57,7 @@ public:
 
     /// Number of logical elements per stored object
     static int const kElementsPerStoredItem =
-            (sizeof(Storage) * 8) / sizeof_bits<T>::value;
+            int(sizeof(Storage) * 8) / sizeof_bits<T>::value;
 
     /// Number of storage elements
     static size_t const kStorageElements = N / kElementsPerStoredItem;
@@ -373,16 +369,18 @@ private:
     Storage storage[kStorageElements];
 
 public:
-    CUTLASS_HOST_DEVICE
-    Array() {}
+#if 0
+  CUTLASS_HOST_DEVICE
+  Array() { }
 
-    CUTLASS_HOST_DEVICE
-    Array(Array const& x) {
-        CUTLASS_PRAGMA_UNROLL
-        for (int i = 0; i < int(kStorageElements); ++i) {
-            storage[i] = x.storage[i];
-        }
+  CUTLASS_HOST_DEVICE
+  Array(Array const &x) {
+    CUTLASS_PRAGMA_UNROLL
+    for (int i = 0; i < int(kStorageElements); ++i) {
+      storage[i] = x.storage[i];
     }
+  }
+#endif
 
     /// Efficient clear method
     CUTLASS_HOST_DEVICE

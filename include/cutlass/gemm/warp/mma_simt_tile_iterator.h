@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -35,6 +35,9 @@
 #include "cutlass/array.h"
 #include "cutlass/tensor_ref.h"
 #include "cutlass/matrix_shape.h"
+
+#include "cutlass/arch/memory_sm75.h"
+
 #include "cutlass/layout/matrix.h"
 
 #include "cutlass/gemm/gemm.h"
@@ -211,6 +214,7 @@ public:
     }
 
     /// Loads a fragment from memory at the location pointed to by the iterator.
+    /// (vector loads)
     CUTLASS_HOST_DEVICE
     void load_with_pointer_offset(Fragment& frag, Index pointer_offset) const {
         Array<Element, Policy::LaneMmaShape::kM>* dst_ptr =
@@ -221,10 +225,17 @@ public:
         for (int k = 0; k < Iterations::kColumn; ++k) {
             CUTLASS_PRAGMA_UNROLL
             for (int m = 0; m < Iterations::kRow; ++m) {
-                dst_ptr[m + k * Iterations::kRow] =
-                        *(ref_.data() +
-                          ref_.offset({m * Policy::WarpShape::kRow, k}) +
-                          pointer_offset / Policy::LaneMmaShape::kM);
+// This logic has been replaced with calls to inline PTX to guarantee
+// vectorization.
+#if 0
+        dst_ptr[m + k * Iterations::kRow] =
+          *(ref_.data() + ref_.offset({m * Policy::WarpShape::kRow, k}) + pointer_offset / Policy::LaneMmaShape::kM);
+#endif
+
+                auto ptr = ref_.data() +
+                           ref_.offset({m * Policy::WarpShape::kRow, k}) +
+                           pointer_offset / Policy::LaneMmaShape::kM;
+                arch::shared_load(dst_ptr[m + k * Iterations::kRow], ptr);
             }
         }
     }
@@ -247,6 +258,252 @@ public:
                 *(ref_.data() + ref_.offset(m * Policy::WarpShape::kM, k) +
                   pointer_offset / Policy::LaneMmaShape::kM) =
                         src_ptr[m + k * Iterations::kM];
+            }
+        }
+    }
+
+    /// Stores a fragment to memory at the location pointed to by the iterator
+    CUTLASS_HOST_DEVICE
+    void store(Fragment const& frag) const {
+        store_with_pointer_offset(frag, 0);
+    }
+
+    /// Notify the iterator which k-group it is currently pointing to.
+    ///
+    /// This does not advance the iterator. Rather, it overrides its internal
+    /// tracking with constant-valued k-group index to enable the compiler to
+    /// fold constants and achieve more efficient code.
+    ///
+    /// This is used by some nontrivial permuted layouts.
+    CUTLASS_DEVICE
+    void set_kgroup_index(int k_group) {
+        // no operation here
+    }
+};
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Specialization for A operands of row-major layouts
+///
+/// Concept: MutableRandomAccessContiguousTileIteratorConcept
+///
+template <
+        /// Size of the matrix to load (concept: MatrixShape)
+        typename Shape_,
+        /// Data type of A elements
+        typename Element_,
+        /// Shape of the warp in units of thread (concept: MmaSimtPolicy)
+        typename Policy_,
+        /// Number of partitions along K dimension - used in sliced-K
+        int PartitionsK,
+        /// Group Size along kPartition - used in sliced-K
+        int PartitionGroupSize>
+class MmaSimtTileIterator<Shape_, Operand::kA, Element_, layout::RowMajor,
+                          Policy_, PartitionsK, PartitionGroupSize> {
+public:
+    /// Shape of tile to load (concept: MatrixShape)
+    using Shape = Shape_;
+
+    /// Operand tag
+    static Operand const kOperand = Operand::kA;
+
+    /// Element type
+    using Element = Element_;
+
+    /// Layout of policy
+    using Layout = layout::RowMajor;
+
+    /// Decomposition of elements among threads
+    using Policy = Policy_;
+
+    /// TensorRef type for loading element from a tensor
+    using TensorRef = TensorRef<Element, Layout>;
+
+    /// Index type
+    using Index = typename TensorRef::Index;
+
+    /// Long Index type
+    using LongIndex = typename TensorRef::LongIndex;
+
+    /// Coordinate for an element in the tensor
+    using TensorCoord = typename TensorRef::TensorCoord;
+
+    //
+    // Derived quantities
+    //
+
+    static_assert(!(Shape::kRow % Policy::WarpShape::kRow),
+                  "The warp-level GEMM M size must be divisible by the number "
+                  "of threads arranged along the M dimension.");
+
+    static_assert(Shape::kRow > 0, "Shape::kRow must be greater than zero.");
+    static_assert(Shape::kColumn > 0,
+                  "Shape::kColumn must be greater than zero.");
+    static_assert(Policy::WarpShape::kRow > 0,
+                  "Policy::WarpShape::kRow must be greater than zero.");
+    static_assert(
+            Shape::kRow / Policy::WarpShape::kRow > 0,
+            "Shape::kRow / Policy::WarpShape::kRow must be greater than zero.");
+
+    /// Thread-level shape of a fragment
+    using ThreadShape =
+            MatrixShape<Shape::kRow / Policy::WarpShape::kRow, Shape::kColumn>;
+
+    static_assert(
+            !(ThreadShape::kRow % Policy::LaneMmaShape::kM),
+            "Thread-level GEMM must be divisible by Policy::LaneMmaShape.");
+
+    /// Number of individual loads (scalar loads)
+    using Iterations = MatrixShape<ThreadShape::kRow / Policy::LaneMmaShape::kM,
+                                   ThreadShape::kColumn>;
+
+    /// Fragment object holding a thread's part of a tile
+    using Fragment = Array<Element, ThreadShape::kCount>;
+
+private:
+    /// Internal reference
+    cutlass::TensorRef<Element, layout::RowMajor> ref_;
+
+    /// Extent of tensor
+    MatrixCoord extent_;
+
+    /// Origin
+    MatrixCoord origin_;
+
+    /// Used to conditionally enable extents checking
+    bool divisible_;
+
+public:
+    /// Default ctor constructs null iterator
+    CUTLASS_HOST_DEVICE
+    MmaSimtTileIterator() : divisible_(true) {}
+
+    /// Constructor from TensorRef
+    CUTLASS_HOST_DEVICE
+    MmaSimtTileIterator(TensorRef ref, int lane_id)
+            : extent_(Shape::kRow, Shape::kColumn), divisible_(true) {
+        // compute offset based on thread ID and lane layout
+        typename Policy::LaneLayout lane_layout = Policy::get_lane_layout();
+
+        MatrixCoord lane_offset = lane_layout.inverse(lane_id) *
+                                  MatrixCoord(Policy::LaneMmaShape::kM, 0);
+
+        origin_ = lane_offset;
+
+        ref.add_coord_offset(lane_offset);
+
+        ref_.reset(ref.data(), ref.stride(0));
+    }
+
+    /// Constructor from TensorRef
+    CUTLASS_HOST_DEVICE
+    MmaSimtTileIterator(TensorRef ref, TensorCoord extent, int lane_id)
+            : extent_(extent), divisible_(false) {
+        // compute offset based on thread ID and lane layout
+        typename Policy::LaneLayout lane_layout = Policy::get_lane_layout();
+
+        MatrixCoord lane_offset = lane_layout.inverse(lane_id) *
+                                  MatrixCoord(Policy::LaneMmaShape::kM, 0);
+
+        origin_ = lane_offset;
+
+        ref.add_coord_offset(lane_offset);
+
+        ref_.reset(ref.data(), ref.stride(0));
+    }
+
+    /// Adds a pointer offset to internal pointer(s) to advance through memory
+    CUTLASS_HOST_DEVICE
+    MmaSimtTileIterator& add_pointer_offset(LongIndex offset) {
+        ref_.add_pointer_offset(offset);
+        return *this;
+    }
+
+    /// Advances an iterator along logical dimensions of matrix in units of
+    /// whole tiles
+    CUTLASS_HOST_DEVICE
+    MmaSimtTileIterator& add_tile_offset(TensorCoord const& coord) {
+        TensorCoord coord_offset(coord.row() * Shape::kRow,
+                                 coord.column() * Shape::kColumn);
+
+        origin_ += coord_offset;
+
+        ref_.add_coord_offset(coord_offset);
+
+        return *this;
+    }
+
+    /// Advances the iterator along the advance dimension
+    CUTLASS_HOST_DEVICE
+    MmaSimtTileIterator& operator++() {
+        ref_.add_coord_offset({0, Shape::kColumn});
+
+        return *this;
+    }
+
+    /// Advances the iterator along the advance dimension
+    CUTLASS_HOST_DEVICE
+    MmaSimtTileIterator& operator--() {
+        ref_.add_coord_offset({0, -Shape::kColumn});
+
+        return *this;
+    }
+
+    /// Loads a fragment from memory at the location pointed to by the iterator.
+    /// (scalar loads)
+    CUTLASS_HOST_DEVICE
+    void load_with_pointer_offset(Fragment& frag, Index pointer_offset) const {
+        CUTLASS_PRAGMA_UNROLL
+        for (int k = 0; k < Iterations::kColumn; ++k) {
+            CUTLASS_PRAGMA_UNROLL
+            for (int m = 0; m < Iterations::kRow; ++m) {
+                CUTLASS_PRAGMA_UNROLL
+                for (int i = 0; i < Policy::LaneMmaShape::kM; i++) {
+                    MatrixCoord offset(
+                            m * Policy::WarpShape::kRow *
+                                            Policy::LaneMmaShape::kM +
+                                    i,
+                            k);
+
+                    MatrixCoord access_coord = origin_ + offset;
+
+                    int frag_idx = m * Policy::LaneMmaShape::kM + i +
+                                   k * Iterations::kRow;
+
+                    if (divisible_ ||
+                        (access_coord.row() < extent_.row() &&
+                         access_coord.column() < extent_.column())) {
+                        frag[frag_idx] = *(ref_.data() + ref_.offset(offset) +
+                                           pointer_offset);
+                    } else {
+                        frag[frag_idx] = Element();
+                    }
+                }
+            }
+        }
+    }
+    /// Loads a fragment from memory at the location pointed to by the iterator.
+    CUTLASS_HOST_DEVICE
+    void load(Fragment& frag) const { load_with_pointer_offset(frag, 0); }
+
+    /// Stores a fragment to memory at the location pointed to by the iterator
+    CUTLASS_HOST_DEVICE
+    void store_with_pointer_offset(Fragment const& frag,
+                                   Index pointer_offset) const {
+        CUTLASS_PRAGMA_UNROLL
+        for (int k = 0; k < Iterations::kColumn; ++k) {
+            CUTLASS_PRAGMA_UNROLL
+            for (int m = 0; m < Iterations::kRow; ++m) {
+                CUTLASS_PRAGMA_UNROLL
+                for (int i = 0; i < Policy::LaneMmaShape::kM; i++) {
+                    *(ref_.data() +
+                      ref_.offset(m * Policy::WarpShape::kM *
+                                                  Policy::LaneMmaShape::kM +
+                                          i,
+                                  k) +
+                      pointer_offset) = frag[m * Policy::LaneMmaShape::kM + i +
+                                             k * Iterations::kM];
+                }
             }
         }
     }
@@ -413,6 +670,7 @@ public:
     }
 
     /// Loads a fragment from memory at the location pointed to by the iterator.
+    /// (vector loads)
     CUTLASS_HOST_DEVICE
     void load_with_pointer_offset(Fragment& frag, Index pointer_offset) const {
         Array<Element, Policy::LaneMmaShape::kN>* dst_ptr =
@@ -423,10 +681,261 @@ public:
         for (int k = 0; k < Iterations::kRow; ++k) {
             CUTLASS_PRAGMA_UNROLL
             for (int n = 0; n < Iterations::kColumn; ++n) {
-                dst_ptr[n + k * Iterations::kColumn] =
-                        *(ref_.data() +
-                          ref_.offset({k, n * Policy::WarpShape::kColumn}) +
-                          pointer_offset / Policy::LaneMmaShape::kN);
+#if 0
+        dst_ptr[n + k * Iterations::kColumn] =
+          *(ref_.data() + ref_.offset({k, n * Policy::WarpShape::kColumn}) + pointer_offset / Policy::LaneMmaShape::kN);
+#endif
+
+                void const* ptr =
+                        ref_.data() +
+                        ref_.offset({k, n * Policy::WarpShape::kColumn}) +
+                        pointer_offset / Policy::LaneMmaShape::kN;
+                arch::shared_load(dst_ptr[n + k * Iterations::kColumn], ptr);
+            }
+        }
+    }
+
+    /// Loads a fragment from memory at the location pointed to by the iterator.
+    CUTLASS_HOST_DEVICE
+    void load(Fragment& frag) const { load_with_pointer_offset(frag, 0); }
+
+    /// Stores a fragment to memory at the location pointed to by the iterator
+    CUTLASS_HOST_DEVICE
+    void store_with_pointer_offset(Fragment const& frag,
+                                   Index pointer_offset) const {
+        Array<Element, Policy::LaneMmaShape::kN> const* src_ptr =
+                reinterpret_cast<Array<Element, Policy::LaneMmaShape::kN>*>(
+                        &frag);
+
+        CUTLASS_PRAGMA_UNROLL
+        for (int k = 0; k < Iterations::kM; ++k) {
+            CUTLASS_PRAGMA_UNROLL
+            for (int n = 0; n < Iterations::kN; ++n) {
+                *(ref_.data() + ref_.offset({k, n * Policy::WarpShape::kN}) +
+                  pointer_offset / Policy::LaneMmaShape::kN) =
+                        src_ptr[n + k * Iterations::kN];
+            }
+        }
+    }
+
+    /// Stores a fragment to memory at the location pointed to by the iterator
+    CUTLASS_HOST_DEVICE
+    void store(Fragment const& frag, Index pointer_offset) const {
+        store_with_pointer_offset(frag, 0);
+    }
+
+    /// Notify the iterator which k-group it is currently pointing to.
+    ///
+    /// This does not advance the iterator. Rather, it overrides its internal
+    /// tracking with constant-valued k-group index to enable the compiler to
+    /// fold constants and achieve more efficient code.
+    ///
+    /// This is used by some nontrivial permuted layouts.
+    CUTLASS_DEVICE
+    void set_kgroup_index(int k_group) {
+        // no operation here
+    }
+};
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Specialization for B operands of column-major layouts
+///
+/// Concept: MutableRandomAccessContiguousTileIteratorConcept
+///
+template <
+        /// Size of the matrix to load (concept: MatrixShape)
+        typename Shape_,
+        /// Data type of A elements
+        typename Element_,
+        /// Shape of the warp in units of thread (concept: MmaSimtPolicy)
+        typename Policy_,
+        /// Number of partitions along K dimension
+        int PartitionsK,
+        /// Group Size along kPartition - used in sliced-K
+        int PartitionGroupSize>
+class MmaSimtTileIterator<Shape_, Operand::kB, Element_, layout::ColumnMajor,
+                          Policy_, PartitionsK, PartitionGroupSize> {
+public:
+    /// Shape of tile to load (concept: MatrixShape)
+    using Shape = Shape_;
+
+    /// Operand tag
+    static Operand const kOperand = Operand::kB;
+
+    /// Element type
+    using Element = Element_;
+
+    /// Layout of policy
+    using Layout = layout::ColumnMajor;
+
+    /// Decomposition of elements among threads
+    using Policy = Policy_;
+
+    /// TensorRef type for loading element from a tensor
+    using TensorRef = TensorRef<Element, Layout>;
+
+    /// Index type
+    using Index = typename TensorRef::Index;
+
+    /// Long Index type
+    using LongIndex = typename TensorRef::LongIndex;
+
+    /// Coordinate for an element in the tensor
+    using TensorCoord = typename TensorRef::TensorCoord;
+
+    //
+    // Derived quantities
+    //
+
+    static_assert(!(Shape::kColumn % Policy::WarpShape::kColumn),
+                  "The warp-level GEMM N size must be divisible by the number "
+                  "of threads arranged along the N dimension.");
+
+    static_assert(Shape::kRow > 0, "Shape::kRow must be greater than zero.");
+    static_assert(Shape::kColumn > 0,
+                  "Shape::kColumn must be greater than zero.");
+    static_assert(Policy::WarpShape::kColumn > 0,
+                  "Policy::WarpShape::kColumn must be greater than zero.");
+    static_assert(Shape::kColumn / Policy::WarpShape::kColumn > 0,
+                  "Shape::kColumn / Policy::WarpShape::kColumn must be greater "
+                  "than zero.");
+
+    /// Thread-level shape of a fragment
+    using ThreadShape =
+            MatrixShape<Shape::kRow,
+                        Shape::kColumn / Policy::WarpShape::kColumn>;
+
+    static_assert(
+            !(ThreadShape::kColumn % Policy::LaneMmaShape::kN),
+            "Thread-level GEMM must be divisible by Policy::LaneMmaShape.");
+
+    /// Number of individual loads
+    using Iterations =
+            MatrixShape<ThreadShape::kRow,
+                        ThreadShape::kColumn / Policy::LaneMmaShape::kN>;
+
+    /// Fragment object holding a thread's part of a tile
+    using Fragment = Array<Element, ThreadShape::kCount>;
+
+private:
+    /// Internal reference
+    cutlass::TensorRef<Element, layout::ColumnMajor> ref_;
+
+    /// Extent of tensor
+    MatrixCoord extent_;
+
+    /// Origin
+    MatrixCoord origin_;
+
+    /// Used to conditionally enable extents checking
+    bool divisible_;
+
+public:
+    /// Default ctor constructs null iterator
+    CUTLASS_HOST_DEVICE
+    MmaSimtTileIterator() : divisible_(true) {}
+
+    /// Constructor from TensorRef
+    CUTLASS_HOST_DEVICE
+    MmaSimtTileIterator(TensorRef ref, int lane_id)
+            : extent_(Shape::kRow, Shape::kColumn), divisible_(true) {
+        // compute offset based on thread ID and lane layout
+        typename Policy::LaneLayout lane_layout = Policy::get_lane_layout();
+
+        MatrixCoord lane_offset = lane_layout.inverse(lane_id) *
+                                  MatrixCoord(0, Policy::LaneMmaShape::kN);
+
+        origin_ = lane_offset;
+
+        ref.add_coord_offset(lane_offset);
+
+        ref_.reset(ref.data(), ref.stride(0));
+    }
+
+    /// Constructor from TensorRef
+    CUTLASS_HOST_DEVICE
+    MmaSimtTileIterator(TensorRef ref, TensorCoord extent, int lane_id)
+            : extent_(extent), divisible_(false) {
+        // compute offset based on thread ID and lane layout
+        typename Policy::LaneLayout lane_layout = Policy::get_lane_layout();
+
+        MatrixCoord lane_offset = lane_layout.inverse(lane_id) *
+                                  MatrixCoord(0, Policy::LaneMmaShape::kN);
+
+        origin_ = lane_offset;
+
+        ref.add_coord_offset(lane_offset);
+
+        ref_.reset(ref.data(), ref.stride(0));
+    }
+
+    /// Adds a pointer offset to internal pointer(s) to advance through memory
+    CUTLASS_HOST_DEVICE
+    MmaSimtTileIterator& add_pointer_offset(LongIndex offset) {
+        ref_.add_pointer_offset(offset);
+        return *this;
+    }
+
+    /// Advances an iterator along logical dimensions of matrix in units of
+    /// whole tiles
+    CUTLASS_HOST_DEVICE
+    MmaSimtTileIterator& add_tile_offset(TensorCoord const& coord) {
+        TensorCoord coord_offset(coord.row() * Shape::kRow,
+                                 coord.column() * Shape::kColumn);
+
+        origin_ += coord_offset;
+
+        ref_.add_coord_offset(coord_offset);
+
+        return *this;
+    }
+
+    /// Advances the iterator along the advance dimension
+    CUTLASS_HOST_DEVICE
+    MmaSimtTileIterator& operator++() {
+        ref_.add_coord_offset({Shape::kRow, 0});
+
+        return *this;
+    }
+
+    /// Advances the iterator along the advance dimension
+    CUTLASS_HOST_DEVICE
+    MmaSimtTileIterator& operator--() {
+        ref_.add_coord_offset({-Shape::kRow, 0});
+
+        return *this;
+    }
+
+    /// Loads a fragment from memory at the location pointed to by the iterator.
+    /// (scalar loads)
+    CUTLASS_HOST_DEVICE
+    void load_with_pointer_offset(Fragment& frag, Index pointer_offset) const {
+        CUTLASS_PRAGMA_UNROLL
+        for (int k = 0; k < Iterations::kRow; ++k) {
+            CUTLASS_PRAGMA_UNROLL
+            for (int n = 0; n < Iterations::kColumn; ++n) {
+                CUTLASS_PRAGMA_UNROLL
+                for (int i = 0; i < Policy::LaneMmaShape::kN; ++i) {
+                    MatrixCoord offset(
+                            k, n * Policy::WarpShape::kColumn *
+                                               Policy::LaneMmaShape::kN +
+                                       i);
+
+                    MatrixCoord access_coord = origin_ + offset;
+
+                    int frag_idx = n * Policy::LaneMmaShape::kN + i +
+                                   k * Iterations::kColumn;
+
+                    if (divisible_ ||
+                        (access_coord.row() < extent_.row() &&
+                         access_coord.column() < extent_.column())) {
+                        frag[frag_idx] = *(ref_.data() + ref_.offset(offset) +
+                                           pointer_offset);
+                    } else {
+                        frag[frag_idx] = Element();
+                    }
+                }
             }
         }
     }

@@ -49,7 +49,6 @@ template <
 class MmaTensorOpFragmentIterator;
 
 // Partial specialization for col-major accumulator tile
-// And Element type is the same as Accumulator Element type
 
 template <
         /// Shape of warp tile to load (concept: MatrixShape)
@@ -58,6 +57,8 @@ template <
         typename AccumulatorShape_,
         /// KBlocks columns to compute residual
         int KBlocksColumn_,
+        /// Accumulator Element type
+        typename ElementAccumulator_,
         /// Element type
         typename Element_,
         /// Shape of one matrix product operation (concept: MatrixShape)
@@ -65,8 +66,8 @@ template <
         /// Output operation on fragment
         typename OutputOp_>
 class MmaTensorOpFragmentIterator<
-        Shape_, AccumulatorShape_, KBlocksColumn_, Element_, Element_,
-        cutlass::layout::ColumnMajor, InstructionShape_, OutputOp_, true> {
+        Shape_, AccumulatorShape_, KBlocksColumn_, ElementAccumulator_,
+        Element_, cutlass::layout::ColumnMajor, InstructionShape_, OutputOp_, true> {
 public:
     /// Shape of warp tile to load (concept: MatrixShape)
     using Shape = Shape_;
@@ -76,6 +77,9 @@ public:
 
     /// KBlocks columns to compute residual
     static int const kKBlockColumn = KBlocksColumn_;
+
+    /// Accumulator Element type
+    using ElementAccumulator = ElementAccumulator_;
 
     /// Element type
     using Element = Element_;
@@ -102,8 +106,10 @@ public:
                         !(Shape::kColumn % InstructionShape::kN),
                 "Shape of warp-level Mma must be divisible by operator shape.");
         static_assert(
-                !(AccumulatorShape::kRow % Shape::kRow) &&
-                        !(AccumulatorShape::kColumn % Shape::kColumn),
+                AccumulatorShape::kRow == Shape::kRow,
+                "Rows of Warp Accumulator must be the same as rows of warp");
+        static_assert(
+                !(AccumulatorShape::kColumn % Shape::kColumn),
                 "Shape of Warp Accumulator must be divisible by warp shape.");
         static_assert(!(kKBlockColumn % Shape::kColumn),
                       "KBlock size must be divisible by warp shape.");
@@ -146,11 +152,22 @@ public:
 
     /// Accumulator Fragment object
     using AccumulatorFragment =
-            Array<Element, AccumulatorShape::kCount / kThreads>;
+            Array<ElementAccumulator, AccumulatorShape::kCount / kThreads>;
+
+    /// Scale Bias Element Type
+    using ElementScaleBias = typename OutputOp::ElementCompute;
+
+    /// Scale Bias Fragment object
+    using ScaleBiasFragment =
+            Array<ElementScaleBias,
+                  InstructionShape::kM * InstructionShape::kK / kThreads>;
 
 private:
     /// Internal access type
-    using AccessType = Array<Element, kElementsPerAccess>;
+    using AccessType = Array<ElementAccumulator, kElementsPerAccess>;
+    using FragmentAccessType = Array<Element, kElementsPerAccess>;
+
+    using ScaleBiasAccessType = Array<ElementScaleBias, kElementsPerAccess>;
 
 private:
     //
@@ -204,30 +221,53 @@ public:
         if (output_op.is_source_needed())  // beta must be zero
             assert(0);
 
-        AccessType src_fragment;
-        src_fragment.clear();
+        FragmentAccessType* frag_ptr =
+                reinterpret_cast<FragmentAccessType*>(&frag);
 
-        AccessType* frag_ptr = reinterpret_cast<AccessType*>(&frag);
-
-        int index_m =
-                (index_ * MmaIterations::kRow) % AccumulatorIterations::kRow;
-        int index_n = (index_ * MmaIterations::kRow) /
-                      AccumulatorIterations::kRow * MmaIterations::kColumn;
+        int index = index_ * MmaIterations::kCount;
 
         CUTLASS_PRAGMA_UNROLL
         for (int n = 0; n < MmaIterations::kColumn; n++) {
             for (int m = 0; m < MmaIterations::kRow; m++) {
                 int accumulator_access_offset =
-                        (n + index_n) * AccumulatorIterations::kRow + m +
-                        index_m;
+                        n * AccumulatorIterations::kRow + m + index;
 
-                frag_ptr[n * MmaIterations::kRow + m].clear();
+                frag_ptr[m * MmaIterations::kColumn + n].clear();
                 if (!(is_residual_tile_ && index_ >= kResidualIndex))
-                    // frag_ptr[n * MmaIterations::kRow + m] =
-                    // accumulators_[accumulator_access_offset];
-                    frag_ptr[n * MmaIterations::kRow + m] =
-                            output_op(accumulators_[accumulator_access_offset],
-                                      src_fragment);
+                    frag_ptr[m * MmaIterations::kColumn + n] =
+                            output_op(accumulators_[accumulator_access_offset]);
+            }
+        }
+    }
+
+    /// Loads a fragment from the referenced part of the accumulator tile
+    /// Then apply per-channel scale and bias
+    CUTLASS_HOST_DEVICE
+    void load(Fragment& frag, ScaleBiasFragment& scale, ScaleBiasFragment& bias,
+              OutputOp output_op) const {
+        if (output_op.is_source_needed())  // beta must be zero
+            assert(0);
+
+        FragmentAccessType* frag_ptr =
+                reinterpret_cast<FragmentAccessType*>(&frag);
+        ScaleBiasAccessType* scale_ptr =
+                reinterpret_cast<ScaleBiasAccessType*>(&scale);
+        ScaleBiasAccessType* bias_ptr =
+                reinterpret_cast<ScaleBiasAccessType*>(&bias);
+
+        int index = index_ * MmaIterations::kCount;
+
+        CUTLASS_PRAGMA_UNROLL
+        for (int n = 0; n < MmaIterations::kColumn; n++) {
+            for (int m = 0; m < MmaIterations::kRow; m++) {
+                int accumulator_access_offset =
+                        n * AccumulatorIterations::kRow + m + index;
+
+                frag_ptr[m * MmaIterations::kColumn + n].clear();
+                if (!(is_residual_tile_ && index_ >= kResidualIndex))
+                    frag_ptr[m * MmaIterations::kColumn + n] = output_op(
+                            accumulators_[accumulator_access_offset],
+                            scale_ptr[n] /*scale*/, bias_ptr[n] /*bias*/);
             }
         }
     }
@@ -250,10 +290,9 @@ template <
         typename InstructionShape_,
         /// Output operation on fragment
         typename OutputOp_>
-class MmaTensorOpFragmentIterator<Shape_, AccumulatorShape_, KBlocksColumn_,
-                                  ElementAccumulator_, Element_,
-                                  cutlass::layout::RowMajor, InstructionShape_,
-                                  OutputOp_, true> {
+class MmaTensorOpFragmentIterator<
+        Shape_, AccumulatorShape_, KBlocksColumn_, ElementAccumulator_,
+        Element_, cutlass::layout::RowMajor, InstructionShape_, OutputOp_, true> {
 public:
     /// Shape of warp tile to load (concept: MatrixShape)
     using Shape = Shape_;
@@ -354,10 +393,19 @@ public:
     using AccumulatorFragment =
             Array<ElementAccumulator, AccumulatorShape::kCount / kThreads>;
 
+    /// Scale Bias Element Type
+    using ElementScaleBias = typename OutputOp::ElementCompute;
+
+    /// Scale Bias Fragment object
+    using ScaleBiasFragment =
+            Array<ElementScaleBias,
+                  InstructionShape::kM * InstructionShape::kK / kThreads>;
+
 private:
     /// Internal access type
     using AccessType = Array<ElementAccumulator, kElementsPerIteration>;
     using FragmentAccessType = Array<Element, kElementsPerIteration>;
+    using ScaleBiasAccessType = Array<ElementScaleBias, kElementsPerIteration>;
 
 private:
     //
@@ -414,37 +462,13 @@ public:
         if (output_op.is_source_needed())  // beta must be zero
             assert(0);
 
-        FragmentAccessType src_fragment;
-        src_fragment.clear();
-
         FragmentAccessType* frag_ptr =
                 reinterpret_cast<FragmentAccessType*>(&frag);
-        //    NumericArrayConverter<Element, ElementAccumulator,
-        //    kElementsPerAccess, FloatRoundStyle::round_indeterminate>
-        //    fragmentConverter;
 
         int index = index_ * AccessIterations::kCount;
 
         CUTLASS_PRAGMA_UNROLL
         for (int i = 0; i < AccessIterations::kCount; i++) {
-            //      int index_m = (index % AccessIterations::kCount) /
-            //      (AccessIterations::kColumn * kIterationsPerInstruction)
-            //                  * kIterationsPerInstruction + index %
-            //                  kIterationsPerInstruction;
-            //
-            //      int index_n = (index / AccessIterations::kCount) *
-            //      MmaIterations::kColumn +
-            //                      (index % (AccessIterations::kColumn *
-            //                      kIterationsPerInstruction)) /
-            //                      kIterationsPerInstruction *
-            //                      AccessIterations::kColumn;
-            //
-            //      int accumulator_access_offset = index_m /
-            //      kIterationsPerInstruction * AccessIterations::kCount *
-            //      kIterationsPerInstruction
-            //                      + index_m % kIterationsPerInstruction +
-            //                      index_n * kIterationsPerInstruction;
-
             int accumulator_access_offset =
                     index / AccessIterations::kCount *
                             (MmaIterations::kColumn *
@@ -463,12 +487,61 @@ public:
             for (int j = 0; j < kIterationsPerAccess; j++) {
                 frag_ptr[i * kIterationsPerAccess + j].clear();
                 if (!(is_residual_tile_ && index_ >= kResidualIndex))
-                    //          frag_ptr[m * MmaIterations::kColumn + n] =
-                    //          fragmentConverter(accumulators_[accumulator_access_offset]);
+                    frag_ptr[i * kIterationsPerAccess + j] =
+                            output_op(accumulators_[accumulator_access_offset +
+                                                    j * kAccessStride]);
+            }
+            index++;
+        }
+    }
+
+    /// Loads a fragment from the referenced part of the accumulator tile
+    /// Then apply per-channel scale and bias
+    CUTLASS_HOST_DEVICE
+    void load(Fragment& frag, ScaleBiasFragment& scale, ScaleBiasFragment& bias,
+              OutputOp output_op) const {
+        if (output_op.is_source_needed())  // beta must be zero
+            assert(0);
+
+        FragmentAccessType* frag_ptr =
+                reinterpret_cast<FragmentAccessType*>(&frag);
+        ScaleBiasAccessType* scale_ptr =
+                reinterpret_cast<ScaleBiasAccessType*>(&scale);
+        ScaleBiasAccessType* bias_ptr =
+                reinterpret_cast<ScaleBiasAccessType*>(&bias);
+
+        int index = index_ * AccessIterations::kCount;
+
+        CUTLASS_PRAGMA_UNROLL
+        for (int i = 0; i < AccessIterations::kCount; i++) {
+            int accumulator_access_offset =
+                    index / AccessIterations::kCount *
+                            (MmaIterations::kColumn *
+                             kIterationsPerInstruction) +
+                    (index % AccessIterations::kCount) /
+                            (AccessIterations::kColumn *
+                             kIterationsPerInstruction) *
+                            AccumulatorIterations::kColumn *
+                            kIterationsPerInstruction +
+                    (index %
+                     (AccessIterations::kColumn * kIterationsPerInstruction)) /
+                            kIterationsPerInstruction *
+                            (kIterationsPerInstruction * kIterationsPerAccess) +
+                    (index % kIterationsPerInstruction);
+
+            int scale_bias_offset = (index % (kIterationsPerInstruction *
+                                              AccessIterations::kColumn)) *
+                                    kIterationsPerAccess;
+
+            CUTLASS_PRAGMA_UNROLL
+            for (int j = 0; j < kIterationsPerAccess; j++) {
+                frag_ptr[i * kIterationsPerAccess + j].clear();
+                if (!(is_residual_tile_ && index_ >= kResidualIndex))
                     frag_ptr[i * kIterationsPerAccess + j] =
                             output_op(accumulators_[accumulator_access_offset +
                                                     j * kAccessStride],
-                                      src_fragment);
+                                      scale_ptr[scale_bias_offset + j],
+                                      bias_ptr[scale_bias_offset + j]);
             }
             index++;
         }

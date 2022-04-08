@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -121,10 +121,12 @@
 
 /// Define a CUTLASS GEMM template and launch a GEMM kernel.
 cudaError_t cutlass_hgemm_nn(int M, int N, int K, cutlass::half_t alpha,
-                             cutlass::half_t const* A, int lda,
-                             cutlass::half_t const* B, int ldb,
+                             cutlass::half_t const* A,
+                             cutlass::layout::ColumnMajor::Stride::Index lda,
+                             cutlass::half_t const* B,
+                             cutlass::layout::ColumnMajor::Stride::Index ldb,
                              cutlass::half_t beta, cutlass::half_t* C,
-                             int ldc) {
+                             cutlass::layout::ColumnMajor::Stride::Index ldc) {
     // Define the GEMM operation
     using Gemm = cutlass::gemm::device::Gemm<
             cutlass::half_t,               // ElementA

@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -15,13 +15,13 @@
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  *AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  *IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- *DISCLAIMED. IN NO EVENT SHALL NVIDIA CORPORATION BE LIABLE FOR ANY DIRECT,
- *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
- * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
- *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
- *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *DISCLAIMED. IN NO EVENT SHALL NVIDIA CORPORATION BE LIABLE FOR ANY
+ *DIRECT,INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ *(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ *LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ *ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ *(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ *SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  **************************************************************************************************/
 /*! \file
@@ -48,6 +48,7 @@
 #include "cutlass/predicate_vector.h"
 #include "cutlass/tensor_ref.h"
 #include "cutlass/tensor_view.h"
+#include "cutlass/transform/threadblock/predicated_tile_access_iterator_params.h"
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -90,6 +91,7 @@ public:
 
     using Index = typename Layout::Index;
     using LongIndex = typename Layout::LongIndex;
+    using StrideIndex = typename Layout::Stride::Index;
 
     using TensorRef = TensorRef<Element, Layout>;
     using TensorView = TensorView<Element, Layout>;
@@ -116,47 +118,27 @@ public:
     /// Predicate vector stores mask to guard accesses
     using Mask = Array<uint32_t, kPredicateWordCount>;
 
-    /// Parameters object is precomputed state and is host-constructible
-    class Params {
+    /// Uses a non-template class
+    struct Params : PredicatedTileAccessIteratorParams {
     public:
         friend PredicatedTileAccessIterator2dThreadTile;
 
-    private:
-        /// stride of pitch-linear layout (units of Element)
-        int stride_;
-        /// amount (in byte) to increment pointer to move to next access along
-        /// strided dimension
-        int inc_strided_;
-        /// amount (in byte) to increment pointer from last access to first
-        /// access of next tile
-        int inc_next_;
-        /// amount (in byte) to increment pointer from first access of current
-        /// tile to first access of next tile
-        int inc_advance_;
+        using Base = PredicatedTileAccessIteratorParams;
 
-    public:
         // Default ctor
         CUTLASS_HOST_DEVICE
-        Params() : stride_(0), inc_strided_(0), inc_next_(0), inc_advance_(0) {}
+        Params() {}
 
         /// Construct the Params object given a pitch-linear tensor's layout
         CUTLASS_HOST_DEVICE
-        Params(Layout const& layout) : stride_(layout.stride(0)) {
-            inc_strided_ = (stride_ * ThreadMap::Delta::kStrided) *
-                           int(sizeof(Element));
+        Params(Layout const& layout)
+                : Base(layout.stride(0), MakePredicatedTileAccessIteratorDesc<
+                                                 Shape, Element, Layout,
+                                                 kAdvanceRank, ThreadMap>()()) {
+        }
 
-            if (kAdvanceRank) {
-                // advance along strided dimension
-                inc_advance_ = Shape::kStrided * stride_ * int(sizeof(Element));
-            } else {
-                // advance along contiguous dimension
-                inc_advance_ = Shape::kContiguous * int(sizeof(Element));
-            }
-
-            inc_next_ = inc_advance_ - (ThreadMap::Iterations::kStrided - 1) *
-                                               ThreadMap::Delta::kStrided *
-                                               stride_ * int(sizeof(Element));
-        };
+        CUTLASS_HOST_DEVICE
+        Params(Base const& base) : Base(base) {}
     };
 
 private:
@@ -435,10 +417,10 @@ public:
 
     /// Clears the predicate set efficiently
     CUTLASS_HOST_DEVICE
-    void clear_mask() {
+    void clear_mask(bool enable = true) {
         CUTLASS_PRAGMA_UNROLL
         for (int i = 0; i < kPredicateWordCount; ++i) {
-            predicates_[i] = 0u;
+            predicates_[i] = enable ? 0u : predicates_[i];
         }
     }
 
@@ -552,7 +534,12 @@ public:
         /// Construct the Params object given a pitch-linear tensor's layout
         CUTLASS_HOST_DEVICE
         Params(Layout const& layout)
-                : params_(layout::PitchLinear(layout.stride(0))){};
+                : params_(layout::PitchLinear(layout.stride(0))) {}
+
+        /// Construct the Params object given a pitch-linear tensor's layout
+        CUTLASS_HOST_DEVICE
+        Params(typename UnderlyingIterator::Params::Base const& base)
+                : params_(base) {}
     };
 
 private:
@@ -649,7 +636,7 @@ public:
 
     /// Clears the predicate set efficiently
     CUTLASS_HOST_DEVICE
-    void clear_mask() { iterator_.clear_mask(); }
+    void clear_mask(bool enable = true) { iterator_.clear_mask(enable); }
 
     /// Clears the predicate set efficiently
     CUTLASS_HOST_DEVICE
@@ -730,7 +717,12 @@ public:
         /// Construct the Params object given a pitch-linear tensor's layout
         CUTLASS_HOST_DEVICE
         Params(Layout const& layout)
-                : params_(layout::PitchLinear(layout.stride(0))){};
+                : params_(layout::PitchLinear(layout.stride(0))) {}
+
+        /// Construct the Params object given a pitch-linear tensor's layout
+        CUTLASS_HOST_DEVICE
+        Params(typename UnderlyingIterator::Params::Base const& base)
+                : params_(base) {}
     };
 
 private:
@@ -826,7 +818,7 @@ public:
 
     /// Clears the predicate set efficiently
     CUTLASS_HOST_DEVICE
-    void clear_mask() { iterator_.clear_mask(); }
+    void clear_mask(bool enable = true) { iterator_.clear_mask(enable); }
 
     /// Clears the predicate set efficiently
     CUTLASS_HOST_DEVICE

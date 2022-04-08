@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -89,6 +89,8 @@ struct TensorOpPolicy<WarpShape, OperatorShape, layout::RowMajor> {
     static int const kIterations =
             OperatorCount::kRow * kIterationsPerInstruction;
 
+    using TileIterations = MatrixShape<kIterations, 1>;
+
     static int const kAccumulatorRowStride = kElementsPerAccess;
     static int const kAccumulatorColumnStride = kElementsPerAccess *
                                                 OperatorCount::kRow *
@@ -105,7 +107,7 @@ template <typename WarpShape,      ///< shape of warp-level GEMM (concept:
           int InterleavedK         ///< number of interleaved k
           >
 struct TensorOpPolicy<WarpShape, OperatorShape,
-                      layout::ColumnMajorInterleaved<InterleavedK>> {
+                      layout::ColumnMajorInterleaved<InterleavedK> > {
     /// Number of operations
     using OperatorCount = MatrixShape<WarpShape::kM / OperatorShape::kM,
                                       WarpShape::kN / OperatorShape::kN>;
@@ -129,6 +131,17 @@ struct TensorOpPolicy<WarpShape, OperatorShape,
     static int const kIterations = WarpShape::kN / InterleavedK *
                                    OperatorCount::kRow *
                                    kIterationsPerInstruction;
+
+    static int const kElementsPerIteration =
+            InterleavedK / OperatorShape::kN * kElementsPerAccess;
+
+    static int const kAccessPerIteration =
+            kElementsPerIteration / kElementsPerAccess;
+
+    // Number of externally visible iterations
+    // static int const kTileIterations = OperatorCount::kRow *
+    // kIterationsPerInstruction;
+    using TileIterations = MatrixShape<1, WarpShape::kN / InterleavedK>;
 };
 
 /// Partial specialization for row-major-interleaved

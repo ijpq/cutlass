@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -81,6 +81,13 @@ public:
     static int const kConvDim = 2;
     using ConvProblemSize = typename conv::Conv2dProblemSize;
 
+    static int const kAccessesPerVector =
+            ThreadMap::kElementsPerAccess / AccessType::kElements;
+
+    static_assert(!(ThreadMap::kElementsPerAccess % AccessType::kElements),
+                  "Vectors implied by the thread map must be divisible by the "
+                  "access type.");
+
     static_assert(sizeof_bits<Element>::value >= 8,
                   "DGRAD requires elements of size 8b or larger.");
 
@@ -126,6 +133,12 @@ public:
                            thread_coord.strided() +
                            s * ThreadMap::Delta::kStrided;
         }
+    }
+
+    CUTLASS_HOST_DEVICE
+    static Params getParams(Conv2dProblemSize const& problem_size,
+                            Layout const& layout) {
+        return Params{problem_size, layout};
     }
 
     /// Overrides the internal iteration index

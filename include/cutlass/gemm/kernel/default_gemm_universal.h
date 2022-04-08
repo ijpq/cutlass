@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -98,6 +98,9 @@ template <
         int Stages,
         /// Operation performed by GEMM
         typename Operator,
+        /// Use zfill or predicate for out-of-bound cp.async
+        SharedMemoryClearOption SharedMemoryClear =
+                SharedMemoryClearOption::kNone,
         ///
         typename Enable = void>
 struct DefaultGemmUniversal;
@@ -143,7 +146,9 @@ template <
         /// Number of stages used in the pipelined mainloop
         int Stages,
         /// Operation performed by GEMM
-        typename Operator>
+        typename Operator,
+        /// Use zfill or predicate for out-of-bound cp.async
+        SharedMemoryClearOption SharedMemoryClear>
 struct DefaultGemmUniversal<
         ElementA, LayoutA,
         ComplexTransform::kNone,  // transform A
@@ -152,13 +157,15 @@ struct DefaultGemmUniversal<
         kAlignmentB, ElementC, LayoutC, ElementAccumulator, OperatorClass,
         ArchTag, ThreadblockShape, WarpShape, InstructionShape,
         EpilogueOutputOp, ThreadblockSwizzle, Stages, Operator,
+        SharedMemoryClear,
         typename std::enable_if<
                 !cutlass::is_complex<ElementAccumulator>::value>::type> {
     using DefaultGemmKernel = typename kernel::DefaultGemm<
             ElementA, LayoutA, kAlignmentA, ElementB, LayoutB, kAlignmentB,
             ElementC, LayoutC, ElementAccumulator, OperatorClass, ArchTag,
             ThreadblockShape, WarpShape, InstructionShape, EpilogueOutputOp,
-            ThreadblockSwizzle, Stages, true, Operator, false>::GemmKernel;
+            ThreadblockSwizzle, Stages, true, Operator,
+            false, SharedMemoryClear>::GemmKernel;
 
     /// Define the kernel in terms of the default kernel
     using GemmKernel =
@@ -213,12 +220,15 @@ template <
         /// Number of stages used in the pipelined mainloop
         int Stages,
         /// Operation performed by GEMM
-        typename Operator>
+        typename Operator,
+        /// Use zfill or predicate for out-of-bound cp.async
+        SharedMemoryClearOption SharedMemoryClear>
 struct DefaultGemmUniversal<
         ElementA, LayoutA, TransformA, kAlignmentA, ElementB, LayoutB,
         TransformB, kAlignmentB, ElementC, LayoutC, ElementAccumulator,
         OperatorClass, ArchTag, ThreadblockShape, WarpShape, InstructionShape,
         EpilogueOutputOp, ThreadblockSwizzle, Stages, Operator,
+        SharedMemoryClear,
         typename std::enable_if<
                 cutlass::is_complex<ElementAccumulator>::value>::type> {
     using DefaultGemmKernel = typename kernel::DefaultGemmComplex<

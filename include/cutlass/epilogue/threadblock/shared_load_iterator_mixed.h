@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -155,7 +155,7 @@ public:
             int col_idx = (thread_offset.column() / kElementsPerAccess) *
                           kLoadsPerAccess;
             int bank_offset =
-                    (col_idx * sizeof(LoadType) / 128) % kLoadsPerAccess;
+                    (col_idx * int(sizeof(LoadType)) / 128) % kLoadsPerAccess;
 
             col_idx += (bank_offset + i) % kLoadsPerAccess;
 
@@ -168,7 +168,7 @@ public:
     void add_pointer_offset(LongIndex pointer_offset) {
         CUTLASS_PRAGMA_UNROLL
         for (int i = 0; i < kLoadsPerAccess; ++i) {
-            pointers_ += pointer_offset / LoadType::kElements;
+            pointers_[i] += pointer_offset / LoadType::kElements;
         }
     }
 
@@ -176,14 +176,15 @@ public:
     void add_tile_offset(TensorCoord const& offset) {
         CUTLASS_PRAGMA_UNROLL
         for (int i = 0; i < kLoadsPerAccess; ++i) {
-            pointers_[i] += offset.row() * stride_ +
-                            offset.column() / LoadType::kElements;
+            pointers_[i] +=
+                    offset.row() * Shape::kRow * stride_ +
+                    offset.column() * Shape::kColumn / LoadType::kElements;
         }
     }
 
     /// Loads a fragment from memory
     CUTLASS_DEVICE
-    void load_with_pointer_offset(Fragment& frag, Index pointer_offset) {
+    void load_with_pointer_offset(Fragment& frag, Index pointer_offset) const {
         CUTLASS_PRAGMA_UNROLL
         for (int cluster = 0; cluster < ThreadMap::Iterations::kCluster;
              ++cluster) {
@@ -233,12 +234,12 @@ public:
 
     /// Loads a fragment
     CUTLASS_DEVICE
-    void load(Fragment& frag) { load_with_pointer_offset(frag, 0); }
+    void load(Fragment& frag) const { load_with_pointer_offset(frag, 0); }
 };
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
-/// Partial specialization for int32_t x 16 => int8_t x 16
+/// Partial specialization for int32_t x 8 => int8_t x 8
 template <typename ThreadMap_  ///< Thread map (conept: OutputTileThreadMap)
           >
 class SharedLoadIteratorMixed<ThreadMap_, int32_t, 32, 8, 16, 8> {
@@ -329,8 +330,9 @@ public:
     void add_tile_offset(TensorCoord const& offset) {
         CUTLASS_PRAGMA_UNROLL
         for (int i = 0; i < kLoadsPerAccess; ++i) {
-            pointers_[i] += offset.row() * stride_ +
-                            offset.column() / LoadType::kElements;
+            pointers_[i] +=
+                    offset.row() * Shape::kRow * stride_ +
+                    offset.column() * Shape::kColumn / LoadType::kElements;
         }
     }
 
@@ -475,8 +477,9 @@ public:
     void add_tile_offset(TensorCoord const& offset) {
         CUTLASS_PRAGMA_UNROLL
         for (int i = 0; i < kLoadsPerAccess; ++i) {
-            pointers_[i] += offset.row() * stride_ +
-                            offset.column() / LoadType::kElements;
+            pointers_[i] +=
+                    offset.row() * Shape::kRow * stride_ +
+                    offset.column() * Shape::kColumn / LoadType::kElements;
         }
     }
 

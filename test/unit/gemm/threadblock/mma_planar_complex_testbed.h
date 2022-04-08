@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -65,7 +65,8 @@ __global__ void kernel_mma_planar_complex(
         typename Mma::IteratorA::Element* ptr_A, int64_t imaginary_stride_A,
         typename Mma::IteratorB::Params params_B,
         typename Mma::IteratorB::Element* ptr_B, int64_t imaginary_stride_B,
-        typename Mma::ElementC* ptr_C, int ldc, int64_t imaginary_stride_C) {
+        typename Mma::ElementC* ptr_C, typename Mma::LayoutC::Stride::Index ldc,
+        int64_t imaginary_stride_C) {
     // Shared storage needed by threadblock-scoped matrix multiply-accumulate
     __shared__ typename Mma::SharedStorage shared_storage;
 

@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -32,6 +32,7 @@
 
 #include "cutlass/array.h"
 #include "cutlass/numeric_types.h"
+#include "cutlass/functional.h"
 
 #include "cutlass/gemm/gemm.h"
 #include "cutlass/arch/arch.h"
@@ -61,6 +62,16 @@ struct OpMultiplyAddFastBF16;
 
 /// Tag indicating the input is converted to a narrower type (F16)
 struct OpMultiplyAddFastF16;
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Tag indicating the input is converted to 2 (big and small) TF32 components
+//  Perform 3xTF32 or 4xTF32 for every F32 output element
+struct OpMultiplyAddFastF32;
+
+/// Tag indicating the input is converted to 2 (big and small) TF32 components
+//  Perform 3xTF32 or 4xTF32 for every complex<F32> output element
+struct OpMultiplyAddComplexFastF32;
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -133,15 +144,18 @@ template <
         /// Layout of C matrix (concept: MatrixLayout)
         typename LayoutC,
         /// Inner product operator
-        typename Operator>
+        typename Operator_>
 struct Mma<gemm::GemmShape<1, 1, 1>, 1, ElementA, LayoutA, ElementB, LayoutB,
-           ElementC, LayoutC, Operator> {
+           ElementC, LayoutC, Operator_> {
     using Shape = gemm::GemmShape<1, 1, 1>;
+    using Operator = Operator_;
 
     CUTLASS_HOST_DEVICE
     void operator()(Array<ElementC, 1>& d, Array<ElementA, 1> const& a,
                     Array<ElementB, 1> const& b, Array<ElementC, 1> const& c) {
-        d[0] = a[0] * b[0] + c[0];
+        multiply_add<ElementA, ElementB, ElementC> op;
+
+        d[0] = op(a[0], b[0], c[0]);
     }
 };
 

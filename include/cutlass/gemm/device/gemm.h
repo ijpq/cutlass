@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -140,7 +140,9 @@ namespace device {
       /// Operator class tag
       typename OperatorClass,
 
-      /// Tag indicating architecture to tune for
+      /// Tag indicating architecture to tune for.  This is the minimum SM that
+      /// supports the intended feature. The device kernel can be built
+      /// targeting any SM larger than this number.
       typename ArchTag,
 
       /// Threadblock-level tile size (concept: GemmShape)
@@ -256,8 +258,7 @@ public:
             ElementA, LayoutA, kAlignmentA, ElementB, LayoutB, kAlignmentB,
             ElementC, LayoutC, ElementAccumulator, OperatorClass, ArchTag,
             ThreadblockShape, WarpShape, InstructionShape, EpilogueOutputOp,
-            ThreadblockSwizzle, kStages, kSplitKSerial, Operator,
-            kIsBetaZero>::GemmKernel;
+            ThreadblockSwizzle, kStages, kSplitKSerial, Operator, kIsBetaZero>::GemmKernel;
 
     /// Argument structure
     struct Arguments {
@@ -424,18 +425,11 @@ public:
         cudaError_t result;
 
         int smem_size = int(sizeof(typename GemmKernel::SharedStorage));
+
         if (smem_size >= (48 << 10)) {
             result = cudaFuncSetAttribute(
                     Kernel<GemmKernel>,
                     cudaFuncAttributeMaxDynamicSharedMemorySize, smem_size);
-
-            if (result != cudaSuccess) {
-                return Status::kErrorInternal;
-            }
-
-            result = cudaFuncSetAttribute(
-                    Kernel<GemmKernel>,
-                    cudaFuncAttributePreferredSharedMemoryCarveout, 100);
 
             if (result != cudaSuccess) {
                 return Status::kErrorInternal;
@@ -652,7 +646,7 @@ public:
     /// Runs the kernel using initialized state.
     Status operator()(Arguments const& args, void* workspace = nullptr,
                       cudaStream_t stream = nullptr) {
-        Status status = initialize(args, workspace);
+        Status status = initialize(args, workspace, stream);
 
         if (status == Status::kSuccess) {
             status = run(stream);

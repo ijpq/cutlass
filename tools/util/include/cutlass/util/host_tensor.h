@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -323,10 +323,10 @@ public:
     Stride& stride() { return layout_.stride(); }
 
     /// Returns the layout object's stride in a given physical dimension
-    Index stride(int dim) const { return layout_.stride().at(dim); }
+    typename Stride::Index stride(int dim) const { return layout_.stride().at(dim); }
 
     /// Returns the layout object's stride in a given physical dimension
-    Index& stride(int dim) { return layout_.stride().at(dim); }
+    typename Stride::Index& stride(int dim) { return layout_.stride().at(dim); }
 
     /// Computes the offset of an index from the origin of the tensor
     LongIndex offset(TensorCoord const& coord) const { return layout_(coord); }

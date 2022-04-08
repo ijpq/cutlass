@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -205,6 +205,8 @@ public:
     /// Parameters object is precomputed state and is host-constructible
     class Params {
     public:
+        using Base = typename TileAccessIterator::Params::Base;
+
         friend PredicatedTileIterator2dThreadTile;
 
     private:
@@ -218,6 +220,9 @@ public:
 
         CUTLASS_HOST_DEVICE
         Params() {}
+
+        CUTLASS_HOST_DEVICE
+        Params(Base const& base) : params_(base) {}
     };
 
 private:
@@ -299,7 +304,9 @@ public:
 
     /// Clears the predicate set efficiently
     CUTLASS_HOST_DEVICE
-    void clear_mask() { address_iterator_.clear_mask(); }
+    void clear_mask(bool enable = true) {
+        address_iterator_.clear_mask(enable);
+    }
 
     /// Clears the predicate set efficiently
     CUTLASS_HOST_DEVICE
@@ -452,6 +459,10 @@ public:
         CUTLASS_HOST_DEVICE
         Params(Layout const& layout)
                 : params_(layout::PitchLinear(layout.stride(0))) {}
+
+        CUTLASS_HOST_DEVICE
+        Params(typename UnderlyingIterator::Params::Base const& base)
+                : params_(base) {}
     };
 
 private:
@@ -526,7 +537,7 @@ public:
 
     /// Clears the predicate set efficiently
     CUTLASS_HOST_DEVICE
-    void clear_mask() { iterator_.clear_mask(); }
+    void clear_mask(bool enable = true) { iterator_.clear_mask(enable); }
 
     /// Clears the predicate set efficiently
     CUTLASS_HOST_DEVICE
@@ -628,9 +639,11 @@ public:
         /// Construct the Params object given a pitch-linear tensor's layout
         CUTLASS_HOST_DEVICE
         Params(Layout const& layout)
-                : params_(layout::PitchLinear(layout.stride(0))){
+                : params_(layout::PitchLinear(layout.stride(0))) {}
 
-                  };
+        CUTLASS_HOST_DEVICE
+        Params(typename UnderlyingIterator::Params::Base const& base)
+                : params_(base) {}
     };
 
 private:
@@ -704,7 +717,7 @@ public:
 
     /// Clears the predicate set efficiently
     CUTLASS_HOST_DEVICE
-    void clear_mask() { iterator_.clear_mask(); }
+    void clear_mask(bool enable = true) { iterator_.clear_mask(enable); }
 
     /// Clears the predicate set efficiently
     CUTLASS_HOST_DEVICE

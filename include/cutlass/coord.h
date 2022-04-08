@@ -1,5 +1,5 @@
 /***************************************************************************************************
- * Copyright (c) 2017-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2017-2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  *modification, are permitted provided that the following conditions are met:
@@ -19,7 +19,7 @@
  *INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
  *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TOR (INCLUDING
+ *OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
  *NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
@@ -93,8 +93,9 @@ public:
     }
 
     /// Copy constructor
+    template <typename IndexType, typename LongIndexType>
     CUTLASS_HOST_DEVICE
-    Coord(Coord<kRank, Index, LongIndex> const& coord) {
+    Coord(Coord<kRank, IndexType, LongIndexType> const& coord) {
         for (int i = 0; i < kRank; ++i) {
             idx[i] = coord[i];
         }
@@ -406,39 +407,55 @@ CUTLASS_HOST_DEVICE Coord<Rank, Index> operator/(Coord<Rank, Index> coord,
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Helper to make a 2-element coordinate
-CUTLASS_HOST_DEVICE
-Coord<1> make_Coord(int _0) {
-    int values[1] = {_0};
-    return Coord<1>(values);
+template <typename T>
+CUTLASS_HOST_DEVICE Coord<1, T> make_Coord(T _0) {
+    T values[1] = {_0};
+    return Coord<1, T>(values);
 }
 
 /// Helper to make a 2-element coordinate
-CUTLASS_HOST_DEVICE
-Coord<2> make_Coord(int _0, int _1) {
-    int values[2] = {_0, _1};
-    return Coord<2>(values);
+template <typename T>
+CUTLASS_HOST_DEVICE Coord<2, T> make_Coord(T _0, T _1) {
+    T values[2] = {_0, _1};
+    return Coord<2, T>(values);
 }
 
 /// Helper to make a 3-element coordinate
-CUTLASS_HOST_DEVICE
-Coord<3> make_Coord(int _0, int _1, int _2) {
-    int values[3] = {_0, _1, _2};
-    return Coord<3>(values);
+template <typename T>
+CUTLASS_HOST_DEVICE Coord<3, T> make_Coord(T _0, T _1, T _2) {
+    T values[3] = {_0, _1, _2};
+    return Coord<3, T>(values);
 }
 
 /// Helper to make a 4-element coordinate
-CUTLASS_HOST_DEVICE
-Coord<4> make_Coord(int _0, int _1, int _2, int _3) {
-    int values[4] = {_0, _1, _2, _3};
-    return Coord<4>(values);
+template <typename T>
+CUTLASS_HOST_DEVICE Coord<4, T> make_Coord(T _0, T _1, T _2, T _3) {
+    T values[4] = {_0, _1, _2, _3};
+    return Coord<4, T>(values);
 }
 
 /// Helper to make a 5-element coordinate
-CUTLASS_HOST_DEVICE
-Coord<5> make_Coord(int _0, int _1, int _2, int _3, int _4) {
-    int values[5] = {_0, _1, _2, _3, _4};
-    return Coord<5>(values);
+template <typename T>
+CUTLASS_HOST_DEVICE Coord<5, T> make_Coord(T _0, T _1, T _2, T _3, T _4) {
+    T values[5] = {_0, _1, _2, _3, _4};
+    return Coord<5, T>(values);
 }
+
+/// Helper to make a 1-element coordinate
+template <int N, typename T>
+CUTLASS_HOST_DEVICE Coord<N, T> make_Coord_with_padding(T _0) {
+    Coord<N, T> coord;
+
+    CUTLASS_PRAGMA_UNROLL
+    for (int i = N - 1; i > 0; --i) {
+        coord[i] = 0;
+    }
+
+    coord[0] = _0;
+
+    return coord;
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 }  // namespace cutlass
