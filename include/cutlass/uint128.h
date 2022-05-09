@@ -51,12 +51,14 @@ namespace cutlass {
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Optionally enable GCC's built-in type
-#if defined(__x86_64) && !defined(__CUDA_ARCH__)
-#if defined(__GNUC__)
+#if defined(__x86_64) && !defined(__CUDA_ARCH__) && defined(__GNUC__)
 #define CUTLASS_UINT128_NATIVE
-#elif defined(_MSC_VER)
+#elif defined(_MSC_VER) && defined(_M_AMD64) && !defined(__CUDA_ARCH__)
 #define CUTLASS_INT128_ARITHMETIC
 #include <intrin.h>
+#if _MSC_VER >= 1920
+#define CUTLASS_INT128_ARITHMETIC_DIV
+#include <immintrin.h>
 #endif
 #endif
 
@@ -108,7 +110,9 @@ struct uint128_t {
 
     /// Lossily cast to uint64
     CUTLASS_HOST_DEVICE
-    explicit operator uint64_t() const { return hilo_.lo; }
+    explicit operator uint64_t() const {
+        return hilo_.lo;
+    }
 
     CUTLASS_HOST_DEVICE
     static void exception() {
@@ -173,7 +177,7 @@ struct uint128_t {
         uint64_t quotient = 0;
 #if defined(CUTLASS_UINT128_NATIVE)
         quotient = uint64_t(native / divisor);
-#elif defined(CUTLASS_INT128_ARITHMETIC)
+#elif defined(CUTLASS_INT128_ARITHMETIC_DIV)
         // implemented using MSVC's arithmetic intrinsics
         uint64_t remainder = 0;
         quotient = _udiv128(hilo_.hi, hilo_.lo, divisor, &remainder);
@@ -190,7 +194,7 @@ struct uint128_t {
         uint64_t remainder = 0;
 #if defined(CUTLASS_UINT128_NATIVE)
         remainder = uint64_t(native % divisor);
-#elif defined(CUTLASS_INT128_ARITHMETIC)
+#elif defined(CUTLASS_INT128_ARITHMETIC_DIV)
         // implemented using MSVC's arithmetic intrinsics
         (void)_udiv128(hilo_.hi, hilo_.lo, divisor, &remainder);
 #else
@@ -207,7 +211,7 @@ struct uint128_t {
 #if defined(CUTLASS_UINT128_NATIVE)
         quotient = uint64_t(native / divisor);
         remainder = uint64_t(native % divisor);
-#elif defined(CUTLASS_INT128_ARITHMETIC)
+#elif defined(CUTLASS_INT128_ARITHMETIC_DIV)
         // implemented using MSVC's arithmetic intrinsics
         quotient = _udiv128(hilo_.hi, hilo_.lo, divisor, &remainder);
 #else

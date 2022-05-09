@@ -7,7 +7,10 @@ cc_library(
             "include/**"
         ]
     ),
-    includes = ['include'], 
+    includes = [
+        'include',
+        'tools/util/include'
+    ], 
 )
 
 # vim: ft=python

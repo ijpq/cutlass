@@ -286,7 +286,9 @@ public:
     /// Returns filter extent as Tensor4DCoord
     CUTLASS_HOST_DEVICE
     cutlass::Tensor4DCoord filter_extent() const {
-        return cutlass::Tensor4DCoord({K, R, S, C});
+        // Jie: Do not modify this, the following code is used in the internal CUTLASS
+        //  although it's different from CUTLASS official release.
+        return cutlass::Tensor4DCoord({K, R, S, C / groups});
     }
 
     /// Returns output extent as Tensor4DCoord
