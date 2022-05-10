@@ -57,7 +57,9 @@ namespace cutlass {
 #define CUTLASS_INT128_ARITHMETIC
 #include <intrin.h>
 #if _MSC_VER >= 1920
-#define CUTLASS_INT128_ARITHMETIC_DIV
+// Jie: we disable this since our compiler does not support,
+//   when the compiler has fixed, de-comment the following line.
+// #define CUTLASS_INT128_ARITHMETIC_DIV
 #include <immintrin.h>
 #endif
 #endif

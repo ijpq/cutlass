@@ -4,7 +4,8 @@ cc_library(
     name = "cutlass",
     hdrs = glob(
         [
-            "include/**"
+            "include/**",
+            "tools/util/include/**"
         ]
     ),
     includes = [
