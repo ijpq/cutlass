@@ -25,7 +25,7 @@
  *
  **************************************************************************************************/
 /*! \file
-  \brief Epilogue for threadblock scoped GEMMs using SIMT.
+  \brief Epilogue for threadblock scoped GEMMs using TensorOp.
 
   The epilogue rearranges the result of a matrix product through shared memory
   to match canonical tensor layouts in global memory. Epilogues support
@@ -35,7 +35,7 @@
 
 /**
  * \file
- * include/cutlass/epilogue/threadblock/dwconv2d_epilogue_volta_tensor_op.h
+ * include/cutlass/epilogue/threadblock/dwconv2d_epilogue_tensor_op.h
  *
  * Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
  *
@@ -46,36 +46,50 @@
  */
 #pragma once
 
-#include "cutlass/array.h"
 #include "cutlass/cutlass.h"
 #include "cutlass/numeric_types.h"
+#include "cutlass/array.h"
+
+#include "cutlass/platform/platform.h"
 
 #include "cutlass/gemm/gemm.h"
 
-#include "cutlass/epilogue/thread/conversion_op.h"
 #include "cutlass/epilogue/thread/linear_combination.h"
 #include "cutlass/epilogue/thread/linear_combination_clamp.h"
+#include "cutlass/epilogue/thread/linear_combination_relu.h"
+#include "cutlass/epilogue/thread/linear_combination_relu0.h"
+#include "cutlass/epilogue/thread/linear_combination_gelu.h"
+#include "cutlass/epilogue/thread/linear_combination_sigmoid.h"
+#include "cutlass/epilogue/thread/linear_combination_hardswish.h"
+#include "cutlass/epilogue/thread/linear_combination_planar_complex.h"
+
+#include "cutlass/epilogue/thread/conversion_op.h"
 #include "cutlass/epilogue/thread/reduction_op.h"
 
 #include "cutlass/transform/threadblock/regular_tile_iterator_pitch_linear.h"
 
-#include "cutlass/epilogue/threadblock/default_thread_map_volta_tensor_op.h"
-#include "cutlass/epilogue/threadblock/convolution_thread_map_simt.h"
-#include "cutlass/epilogue/warp/fragment_iterator_volta_tensor_op.h"
-#include "cutlass/epilogue/warp/tile_iterator_volta_tensor_op.h"
-
-#include "cutlass/epilogue/threadblock/bias_tile_iterator.h"
-#include "cutlass/epilogue/threadblock/convolution_epilogue.h"
-#include "cutlass/epilogue/threadblock/epilogue.h"
+#include "cutlass/epilogue/warp/fragment_iterator_tensor_op.h"
+#include "cutlass/epilogue/warp/fragment_iterator_complex_tensor_op.h"
+#include "cutlass/epilogue/warp/tile_iterator_tensor_op.h"
+#include "cutlass/epilogue/warp/tile_iterator_tensor_op_mixed.h"
+#include "cutlass/epilogue/threadblock/default_thread_map_tensor_op.h"
+#include "cutlass/epilogue/threadblock/predicated_tile_iterator.h"
+#include "cutlass/epilogue/threadblock/predicated_tile_iterator_strided_dgrad.h"
+#include "cutlass/epilogue/threadblock/predicated_tile_iterator_affine.h"
 #include "cutlass/epilogue/threadblock/shared_load_iterator.h"
+#include "cutlass/epilogue/threadblock/shared_load_iterator_mixed.h"
+
+#include "cutlass/epilogue/threadblock/epilogue.h"
+#include "cutlass/epilogue/threadblock/interleaved_epilogue.h"
 #include "cutlass/epilogue/threadblock/dwconv2d_predicated_tile_iterator.h"
-#include "cutlass/epilogue/warp/interleaved_simt_policy.h"
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
 namespace cutlass {
 namespace epilogue {
 namespace threadblock {
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -87,15 +101,15 @@ template <typename Shape_,            ///< Threadblock-level tile size (concept:
           typename OutputOp_,         ///< Thread-level epilogue operator
           int ElementsPerAccess       ///< Elements per access
           >
-struct Dwconv2dEpilogueVoltaTensorOp;
+struct Dwconv2dEpilogueTensorOp;
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
 template <typename Shape_, typename WarpMmaTensorOp_, typename OutputOp_,
           int ElementsPerAccess>
-struct Dwconv2dEpilogueVoltaTensorOp<Shape_, layout::TensorNCHW,
-                                     layout::TensorNCHW, WarpMmaTensorOp_,
-                                     OutputOp_, ElementsPerAccess> {
+struct Dwconv2dEpilogueTensorOp<Shape_, layout::TensorNCHW, layout::TensorNCHW,
+                                WarpMmaTensorOp_, OutputOp_,
+                                ElementsPerAccess> {
     using Shape = Shape_;
     using WarpMmaTensorOp = WarpMmaTensorOp_;
     using OutputOp = OutputOp_;
@@ -107,34 +121,38 @@ struct Dwconv2dEpilogueVoltaTensorOp<Shape_, layout::TensorNCHW,
     using ElementBias = typename OutputOp::ElementBias;
     using LayoutBias = layout::TensorNCHW;
     using ElementAccumulator = typename WarpMmaTensorOp::ElementC;
+    using LayoutC = layout::RowMajor;
 
     //
     // Thread map
     //
 
-    using OutputTileThreadMap = typename cutlass::epilogue::threadblock::
-            DefaultThreadMapVoltaTensorOp<
+    using OutputTileThreadMap =
+            typename cutlass::epilogue::threadblock::DefaultThreadMapTensorOp<
                     Shape, typename WarpMmaTensorOp::Shape, kPartitionsK,
-                    ElementOutput, kElementsPerAccess,
-                    ElementAccumulator>::Type;
+                    ElementOutput, kElementsPerAccess>::Type;
+
+    using AccumulatorFragmentIterator =
+            cutlass::epilogue::warp::FragmentIteratorTensorOp<
+                    typename WarpMmaTensorOp::Shape,
+                    typename WarpMmaTensorOp::Policy::Operator::Shape,
+                    typename WarpMmaTensorOp::Policy::Operator::ElementC,
+                    typename WarpMmaTensorOp::Policy::Operator::FragmentC,
+                    LayoutC>;
+
+    /// Support several implementations depending on structure of epilogue
+    using DefaultIterators = detail::DefaultIteratorsTensorOp<
+            ElementOutput, ElementAccumulator, kElementsPerAccess, Shape,
+            typename WarpMmaTensorOp::Shape,
+            typename WarpMmaTensorOp::Policy::Operator::Shape,
+            typename OutputTileThreadMap::CompactedThreadMap>;
+
+    using WarpTileIterator = typename DefaultIterators::WarpTileIterator;
+    using SharedLoadIterator = typename DefaultIterators::SharedLoadIterator;
 
     using OutputTileIterator =
             cutlass::epilogue::threadblock::Dwconv2dPredicatedTileIterator<
                     OutputTileThreadMap, LayoutDst, ElementOutput>;
-
-    using AccumulatorFragmentIterator =
-            cutlass::epilogue::warp::FragmentIteratorVoltaTensorOp<
-                    typename WarpMmaTensorOp::Shape, gemm::GemmShape<32, 32, 4>,
-                    ElementAccumulator, typename WarpMmaTensorOp::LayoutC>;
-
-    using WarpTileIterator = cutlass::epilogue::warp::TileIteratorVoltaTensorOp<
-            typename WarpMmaTensorOp::Shape, gemm::GemmShape<32, 32, 4>,
-            ElementAccumulator, typename WarpMmaTensorOp::LayoutC>;
-
-    using SharedLoadIterator =
-            cutlass::epilogue::threadblock::SharedLoadIterator<
-                    typename OutputTileThreadMap::CompactedThreadMap,
-                    ElementAccumulator>;
 
     using BiasTileIterator =
             cutlass::epilogue::threadblock::Dwconv2dBiasTileIterator<
@@ -150,74 +168,6 @@ struct Dwconv2dEpilogueVoltaTensorOp<Shape_, layout::TensorNCHW,
             Shape, LayoutDst, kPartitionsK, WarpMmaTensorOp, OutputTileIterator,
             AccumulatorFragmentIterator, WarpTileIterator, SharedLoadIterator,
             BiasTileIterator, OutputOp, Padding>;
-};
-
-template <typename Shape_,            ///< Threadblock-level tile size (concept:
-                                      ///< GemmShape)
-          typename LayoutDst_,        ///< Layout type for output tensor
-          typename LayoutBias_,       ///< Layout type for bias tensor
-          typename WarpMmaTensorOp_,  ///< Warp-level mma operator
-          typename OutputOp_,         ///< Thread-level epilogue operator
-          int ElementsPerAccess       ///< Elements per access
-          >
-struct Dwconv2dWgradEpilogueVoltaTensorOp;
-
-/////////////////////////////////////////////////////////////////////////////////////////////////
-
-template <typename Shape_, typename WarpMmaTensorOp_, typename OutputOp_,
-          int ElementsPerAccess>
-struct Dwconv2dWgradEpilogueVoltaTensorOp<Shape_, layout::TensorNCHW,
-                                          layout::TensorNCHW, WarpMmaTensorOp_,
-                                          OutputOp_, ElementsPerAccess> {
-    using Shape = Shape_;
-    using WarpMmaTensorOp = WarpMmaTensorOp_;
-    using OutputOp = OutputOp_;
-    static int const kElementsPerAccess = ElementsPerAccess;
-    static const int kPartitionsK = Shape::kK / WarpMmaTensorOp::Shape::kK;
-
-    using ElementOutput = typename OutputOp::ElementOutput;
-    using LayoutDst = layout::TensorNCHW;
-    using ElementAccumulator = typename WarpMmaTensorOp::ElementC;
-
-    //
-    // Thread map
-    //
-
-    using OutputTileThreadMap = typename cutlass::epilogue::threadblock::
-            DefaultThreadMapVoltaTensorOp<
-                    Shape, typename WarpMmaTensorOp::Shape, kPartitionsK,
-                    ElementOutput, kElementsPerAccess,
-                    ElementAccumulator>::Type;
-
-    using OutputTileIterator =
-            cutlass::epilogue::threadblock::Dwconv2dWgradPredicatedTileIterator<
-                    Shape, OutputTileThreadMap, LayoutDst, ElementOutput>;
-
-    using AccumulatorFragmentIterator =
-            cutlass::epilogue::warp::FragmentIteratorVoltaTensorOp<
-                    typename WarpMmaTensorOp::Shape, gemm::GemmShape<32, 32, 4>,
-                    ElementAccumulator, typename WarpMmaTensorOp::LayoutC>;
-
-    using WarpTileIterator = cutlass::epilogue::warp::TileIteratorVoltaTensorOp<
-            typename WarpMmaTensorOp::Shape, gemm::GemmShape<32, 32, 4>,
-            ElementAccumulator, typename WarpMmaTensorOp::LayoutC>;
-
-    using SharedLoadIterator =
-            cutlass::epilogue::threadblock::SharedLoadIterator<
-                    typename OutputTileThreadMap::CompactedThreadMap,
-                    ElementAccumulator>;
-
-    /// Hard-coded padding elements added
-    using Padding = typename WarpTileIterator::Padding;
-
-    //
-    // Define the epilogue
-    //
-    using Epilogue =
-            cutlass::epilogue::threadblock::ConvolutionEpilogueNoSrcNoBias<
-                    Shape, LayoutDst, kPartitionsK, WarpMmaTensorOp,
-                    OutputTileIterator, AccumulatorFragmentIterator,
-                    WarpTileIterator, SharedLoadIterator, OutputOp, Padding>;
 };
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
