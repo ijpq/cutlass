@@ -71,11 +71,15 @@ enum {
 #endif
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-
+#include <cuda_runtime_api.h>
 #include <cuda_fp16.h>
 
 #include "cutlass/cutlass.h"
 #include "cutlass/platform/platform.h"
+
+#if !defined(__CUDA_ARCH__) && (CUDART_VERSION < 9000)
+ typedef __half __half_raw;
+#endif
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -785,7 +789,7 @@ half_t operator*(half_t const& lhs, half_t const& rhs) {
 
 CUTLASS_HOST_DEVICE
 half_t operator/(half_t const& lhs, half_t const& rhs) {
-#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 530)
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 530) && (__CUDACC_VER_MAJOR__ >= 9)
     return half_t(__hdiv(lhs.to_half(), rhs.to_half()));
 #else
     return half_t(float(lhs) / float(rhs));
@@ -824,7 +828,7 @@ half_t& operator*=(half_t& lhs, half_t const& rhs) {
 
 CUTLASS_HOST_DEVICE
 half_t& operator/=(half_t& lhs, half_t const& rhs) {
-#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 530)
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 530) && (__CUDACC_VER_MAJOR__ >= 9)
     lhs = half_t(__hdiv(lhs.to_half(), rhs.to_half()));
 #else
     lhs = half_t(float(lhs) / float(rhs));
