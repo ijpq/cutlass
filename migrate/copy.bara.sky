@@ -1,16 +1,82 @@
+local_repo = 'git@git-core.megvii-inc.com:brain-sdk/cutlass.git'
+remote_repo = 'git@github.com:MegEngine/cutlass.git'
+remote_pr_url = 'https://github.com/MegEngine/cutlass'
+
+
+gitlab_files = glob(
+    [
+        'bin2hex.cmake',
+        'CHANGELOG.md',
+        'CMakeLists.txt',
+        'CONTRIBUTORS.md',
+        'cuBLAS.cmake',
+        'CUDA.cmake',
+        'Doxyfile',
+        'LICENSE.txt',
+        'README.md',
+        'cmake/**',
+        'docs/**',
+        'examples/**',
+        'include/**',
+        'media/**',
+        'test/**',
+        'tools/**',
+        '.clang-format', 
+    ]
+)
+github_files = gitlab_files
+
+
 core.workflow(
     name = 'default',
     origin = git.origin(
-        url = 'git@git-core.megvii-inc.com:brain-sdk/cutlass.git',
+        url = local_repo,
         ref = 'master',
     ),
     destination = git.destination(
-        url = 'git@git-core.megvii-inc.com:megengine/cutlass.git',
-        fetch = 'master',
-        push = 'master',
+        url = remote_repo,
+        fetch = 'mge_dev',
+        push = 'mge_dev',
     ),
-    origin_files = glob(['**'], exclude = ['migrate/**', 'ci/**', 'third-party/**', '.gitmodules']),
-    destination_files = glob(['**'], exclude = ['migrate/**', 'ci/**', 'third-party/**', '.gitmodules']),
+    origin_files = gitlab_files,
+    destination_files = github_files,
     authoring = authoring.overwrite("Megvii Engine Team <megengine@megvii.com>"),
     mode = 'ITERATIVE',
+    transformations = [
+        metadata.expose_label("GITHUB_PUBLIC_PR_NUMBER", new_name ="Closes", separator=" #"),
+        metadata.restore_author(label='ORIGINAL_AUTHOR'),
+        metadata.scrubber('<INTERNAL>((?:\n|.)*)</INTERNAL>$'),
+        metadata.remove_label("GITHUB_PUBLIC_PR_NUMBER"),
+        metadata.remove_label("GITHUB_PR_TITLE"),
+        metadata.remove_label("GITHUB_PR_URL"),
+    ],
 )
+
+
+core.workflow(
+    name = 'import',
+    mode = 'CHANGE_REQUEST',
+    origin = git.github_pr_origin(
+        url = remote_pr_url,
+        use_merge = True,
+    ),
+    destination = git.destination(
+        url = local_repo,
+        fetch = 'master',
+        push = 'master',
+        integrates = [],
+    ),
+    set_rev_id = False,
+    origin_files = github_files,
+    destination_files = gitlab_files,
+    authoring = authoring.pass_thru("Dude <email@email.com>"),
+
+    transformations = [
+        metadata.replace_message("${GITHUB_PR_TITLE}\n\n<INTERNAL>\n${GITHUB_PR_BODY}\n</INTERNAL>\n\n"),
+        metadata.save_author(label='ORIGINAL_AUTHOR'),
+        metadata.expose_label("COPYBARA_INTEGRATE_REVIEW"),
+        metadata.expose_label("GITHUB_PR_NUMBER", new_name ="GITHUB_PUBLIC_PR_NUMBER"),
+        metadata.expose_label("GITHUB_PR_URL"),
+    ],
+)
+

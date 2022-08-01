@@ -1,6 +1,7 @@
 stages:
   - check
   - test
+  - sync
 
 .rjob_template: &rjob_common
   only:
@@ -65,5 +66,15 @@ cutlass_test:
     - source ./ci/setup_cuda.sh
     - ./ci/cmake_cutlass.sh
     - ./ci/run_cutlass_test.sh
+
+sync-code:
+  stage: sync
+  tags:
+    - copybara
+  only:
+    - master
+  script:
+    - ./migrate/copybara  ./migrate/copy.bara.sky
+
 
 
