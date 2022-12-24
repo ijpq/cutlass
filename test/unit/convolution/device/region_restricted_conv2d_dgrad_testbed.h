@@ -27,13 +27,13 @@ namespace convolution {
 namespace device {
 
 template <typename Convolution>
-struct RRConvFpropTestbed {
+struct RRConvDgradTestbed {
     using ElementAccumulator = typename Convolution::ElementAccumulator;
     using ElementCompute = typename Convolution::ConvolutionKernel::Epilogue::
             OutputOp::ElementCompute;
 
     /// Initialization
-    cutlass::Distribution::Kind init_src;
+    cutlass::Distribution::Kind init_diff;
     cutlass::Distribution::Kind init_filter;
     cutlass::Distribution::Kind init_mask_input;
     cutlass::Distribution::Kind init_mask_output;
@@ -43,7 +43,7 @@ struct RRConvFpropTestbed {
 
     cutlass::HostTensor<typename Convolution::ElementSrc,
                         typename Convolution::LayoutSrc>
-            tensor_src;
+            tensor_diff;
     cutlass::HostTensor<typename Convolution::ElementFilter,
                         typename Convolution::LayoutFilter>
             tensor_filter;
@@ -58,30 +58,30 @@ struct RRConvFpropTestbed {
             tensor_z;
     cutlass::HostTensor<typename Convolution::ElementDst,
                         typename Convolution::LayoutDst>
-            tensor_dst;
+            tensor_grad;
     cutlass::HostTensor<typename Convolution::ElementBias,
                         typename Convolution::LayoutBias>
             tensor_bias;
     cutlass::HostTensor<typename Convolution::ElementDst,
                         typename Convolution::LayoutDst>
-            reference_dst;
+            reference_grad;
     //
     // Methods
     //
-    RRConvFpropTestbed(cutlass::Distribution::Kind init_src_ =
-                               cutlass::Distribution::Gaussian,
+    RRConvDgradTestbed(cutlass::Distribution::Kind init_diff_ =
+                               cutlass::Distribution::Constant,
                        cutlass::Distribution::Kind init_filter_ =
-                               cutlass::Distribution::Gaussian,
+                               cutlass::Distribution::Constant,
                        cutlass::Distribution::Kind init_mask_input_ =
-                               cutlass::Distribution::Uniform,
+                               cutlass::Distribution::Constant,
                        cutlass::Distribution::Kind init_mask_output_ =
-                               cutlass::Distribution::Uniform,
+                               cutlass::Distribution::Constant,
                        cutlass::Distribution::Kind init_bias_ =
-                               cutlass::Distribution::Uniform,
+                               cutlass::Distribution::Constant,
                        cutlass::Distribution::Kind init_z_ =
                                cutlass::Distribution::Constant,
                        uint64_t seed_ = 2080)
-            : init_src(init_src_),
+            : init_diff(init_diff_),
               init_filter(init_filter_),
               init_mask_input(init_mask_input_),
               init_mask_output(init_mask_output_),
@@ -108,7 +108,7 @@ struct RRConvFpropTestbed {
             cutlass::reference::host::BlockFillSequential(view.data(),
                                                           view.capacity());
         } else if (dist_kind == cutlass::Distribution::Constant) {
-            cutlass::reference::host::TensorFill(view, Element(0));
+            cutlass::reference::host::TensorFill(view, Element(1));
         } else {
             // TODO: Implement the rest
             EXPECT_TRUE(false) << "Not implemented";
@@ -130,22 +130,20 @@ struct RRConvFpropTestbed {
         // Allocate the CONVOLUTION workspace
         //
 
-        tensor_src.resize(typename Convolution::LayoutSrc::TensorCoord{
-                conv_param.N, conv_param.H, conv_param.W, conv_param.C});
-        tensor_dst.resize(typename Convolution::LayoutDst::TensorCoord{
+        tensor_diff.resize(typename Convolution::LayoutSrc::TensorCoord{
                 conv_param.N, conv_param.P, conv_param.Q, conv_param.K});
-        if (verify) {
-            reference_dst.resize(typename Convolution::LayoutDst::TensorCoord{
-                    conv_param.N, conv_param.P, conv_param.Q, conv_param.K});
-        }
-        tensor_mask_input.resize(typename Convolution::LayoutSrc::TensorCoord{
+        tensor_grad.resize(typename Convolution::LayoutDst::TensorCoord{
+                conv_param.N, conv_param.H, conv_param.W, conv_param.C});
+        reference_grad.resize(typename Convolution::LayoutDst::TensorCoord{
+                conv_param.N, conv_param.H, conv_param.W, conv_param.C});
+        tensor_mask_input.resize(typename Convolution::LayoutDst::TensorCoord{
                 conv_param.N, conv_param.H, conv_param.W, 1});
-        tensor_mask_output.resize(typename Convolution::LayoutDst::TensorCoord{
+        tensor_mask_output.resize(typename Convolution::LayoutSrc::TensorCoord{
                 conv_param.N, conv_param.P, conv_param.Q, 1});
         tensor_bias.resize(typename Convolution::LayoutBias::TensorCoord{
-                1, 1, 1, conv_param.K});
+                1, 1, 1, conv_param.C});
         tensor_z.resize(typename Convolution::LayoutDst::TensorCoord{
-                conv_param.N, conv_param.P, conv_param.Q, conv_param.K});
+                conv_param.N, conv_param.H, conv_param.W, conv_param.C});
         if_constexpr<is_depthwise_convolution<Convolution>()>(
                 [&](auto _) {
                     auto&& conv_param_ = _(conv_param);
@@ -163,9 +161,9 @@ struct RRConvFpropTestbed {
                                     conv_param_.C});
                 });
 
-        EXPECT_TRUE(initialize_tensor(tensor_src.host_view(), init_src,
-                                      seed + 2019));
         EXPECT_TRUE(initialize_tensor(tensor_filter.host_view(), init_filter,
+                                      seed + 2019));
+        EXPECT_TRUE(initialize_tensor(tensor_diff.host_view(), init_diff,
                                       seed + 2018));
         EXPECT_TRUE(initialize_tensor(tensor_mask_input.host_view(),
                                       init_mask_input, seed + 2019));
@@ -175,9 +173,9 @@ struct RRConvFpropTestbed {
                                       seed + 2017));
         EXPECT_TRUE(
                 initialize_tensor(tensor_z.host_view(), init_z, seed + 2016));
-        cutlass::reference::host::TensorCopy(reference_dst.host_view(),
-                                             tensor_z.host_view());
-        tensor_src.sync_device();
+        // cutlass::reference::host::TensorCopy(reference_grad.host_view(),
+        //                                      tensor_z.host_view());
+        tensor_diff.sync_device();
         tensor_filter.sync_device();
         tensor_mask_input.sync_device();
         tensor_mask_output.sync_device();
@@ -188,33 +186,33 @@ struct RRConvFpropTestbed {
     /// Compares computed reference with device reference and outputs to a file
     /// if incorrect
     bool compare_reference() {
-        tensor_dst.sync_host();
+        tensor_grad.sync_host();
 
-        EXPECT_GT(cutlass::reference::host::TensorNorm(tensor_src.host_view()),
-                  0);
         EXPECT_GT(
                 cutlass::reference::host::TensorNorm(tensor_filter.host_view()),
                 0);
+        EXPECT_GT(cutlass::reference::host::TensorNorm(tensor_diff.host_view()),
+                  0);
         EXPECT_GT(cutlass::reference::host::TensorNorm(tensor_bias.host_view()),
                   0);
 
-        if (tensor_dst.size() > 1)
+        if (tensor_grad.size() > 1)
             EXPECT_GT(cutlass::reference::host::TensorNorm(
-                              tensor_dst.host_view()),
+                              tensor_grad.host_view()),
                       0);
 
-        if (reference_dst.size() > 1)
+        if (reference_grad.size() > 1)
             EXPECT_GT(cutlass::reference::host::TensorNorm(
-                              reference_dst.host_view()),
+                              reference_grad.host_view()),
                       0);
 
         bool passed = cutlass::reference::host::TensorEquals(
-                reference_dst.host_view(), tensor_dst.host_view());
+                reference_grad.host_view(), tensor_grad.host_view());
 
         if (!passed) {
             std::stringstream fname_ref;
 
-            fname_ref << "error_Conv2d_Fprop_device_reference_"
+            fname_ref << "error_Conv2d_Dgrad_device_reference_"
                       << Convolution::ThreadblockShape::kM << "x"
                       << Convolution::ThreadblockShape::kN << "x"
                       << Convolution::ThreadblockShape::kK << "_"
@@ -224,11 +222,11 @@ struct RRConvFpropTestbed {
 
             std::ofstream file_ref(fname_ref.str());
 
-            file_ref << "\nReference output=\n" << reference_dst.host_view();
+            file_ref << "\nReference output=\n" << reference_grad.host_view();
 
             std::stringstream fname_comp;
 
-            fname_comp << "error_Conv2d_Fprop_device_computed_"
+            fname_comp << "error_Conv2d_Dgrad_device_computed_"
                        << Convolution::ThreadblockShape::kM << "x"
                        << Convolution::ThreadblockShape::kN << "x"
                        << Convolution::ThreadblockShape::kK << "_"
@@ -238,11 +236,11 @@ struct RRConvFpropTestbed {
 
             std::ofstream file_comp(fname_comp.str());
 
-            file_comp << "src=\n" << tensor_src.host_view();
-            file_comp << "\nfilter=\n" << tensor_filter.host_view();
+            file_comp << "filter=\n" << tensor_filter.host_view();
+            file_comp << "\ndiff=\n" << tensor_diff.host_view();
             file_comp << "\nrin=\n" << tensor_mask_input.host_view();
             file_comp << "\nrout=\n" << tensor_mask_output.host_view();
-            file_comp << "\nComputed =\n" << tensor_dst.host_view();
+            file_comp << "\nComputed =\n" << tensor_grad.host_view();
         }
 
         EXPECT_TRUE(passed);
@@ -258,7 +256,7 @@ struct RRConvFpropTestbed {
         //
 
         // FIXME: add beta, gamma ...
-        cutlass::reference::host::RegionRestrictedConvolution2dFprop<
+        cutlass::reference::host::RegionRestrictedConvolution2dDgrad<
                 Convolution::kConvolutionType, typename Convolution::ElementSrc,
                 typename Convolution::LayoutSrc,
                 typename Convolution::ElementFilter,
@@ -272,11 +270,11 @@ struct RRConvFpropTestbed {
                 ElementAccumulator, typename Convolution::Operator>
                 reference_convolution;
 
-        reference_convolution(conv_param, alpha, tensor_src.host_ref(),
+        reference_convolution(conv_param, alpha, tensor_diff.host_ref(),
                               tensor_filter.host_ref(),
                               tensor_mask_input.host_ref(),
                               tensor_mask_output.host_ref(),
-                              reference_dst.host_ref(), ElementAccumulator(0));
+                              reference_grad.host_ref(), ElementAccumulator(0));
 
         return compare_reference();
     }
@@ -295,13 +293,13 @@ struct RRConvFpropTestbed {
         // FIXME: last arguments needs compatiable with BiasAddLinearCombination
         typename Convolution::Arguments arguments{
                 conv_param,
-                tensor_src.device_ref(),
+                tensor_diff.device_ref(),
                 tensor_filter.device_ref(),
                 tensor_mask_input.device_ref(),
                 tensor_mask_output.device_ref(),
                 tensor_bias.device_ref(),
                 tensor_z.device_ref(),
-                tensor_dst.device_ref(),
+                tensor_grad.device_ref(),
                 {alpha, beta, gamma}};
 
         Convolution conv_op;
@@ -348,13 +346,13 @@ struct RRConvFpropTestbed {
 
         typename Convolution::Arguments arguments{
                 conv_param,
-                tensor_src.device_ref(),
+                tensor_diff.device_ref(),
                 tensor_filter.device_ref(),
                 tensor_mask_input.device_ref(),
                 tensor_mask_output.device_ref(),
                 tensor_bias.device_ref(),
                 tensor_z.device_ref(),
-                tensor_dst.device_ref(),
+                tensor_grad.device_ref(),
                 {alpha, beta, gamma}};
 
         Convolution conv_op;
@@ -412,13 +410,13 @@ struct RRConvFpropTestbed {
 };
 
 template <typename Convolution>
-bool BenchRegionRestrictedDepthwiseConv2dFprop(int batch = 64,
+bool BenchRegionRestrictedDepthwiseConv2dDgrad(int batch = 64,
                                                int iterations = 1000,
                                                bool do_verify = false) {
     bool passed = true;
     double problem_alpha[] = {1.0};
 
-    RRConvFpropTestbed<Convolution> testbed;
+    RRConvDgradTestbed<Convolution> testbed;
     using ElementCompute =
             typename Convolution::EpilogueOutputOp::ElementCompute;
     using ConvolutionParameter = cutlass::conv::Conv2dProblemSize;
@@ -483,12 +481,11 @@ bool BenchRegionRestrictedDepthwiseConv2dFprop(int batch = 64,
 }
 
 template <typename Convolution>
-bool TestRegionRestrictedDepthwiseConv2dFprop() {
+bool TestRegionRestrictedDepthwiseConv2dDgrad() {
     bool passed = true;
     double problem_alpha[] = {1.0};
-    double problem_beta[] = {0.0};
 
-    RRConvFpropTestbed<Convolution> testbed;
+    RRConvDgradTestbed<Convolution> testbed;
 
     using ElementCompute =
             typename Convolution::EpilogueOutputOp::ElementCompute;
@@ -524,14 +521,11 @@ bool TestRegionRestrictedDepthwiseConv2dFprop() {
 
     for (auto iter_arg = args.begin(); iter_arg != args.end(); iter_arg++) {
         for (auto alpha : problem_alpha) {
-            for (auto beta : problem_beta) {
-                auto arg = *iter_arg;
-                passed = testbed.run(arg,
-                                     cutlass::from_real<ElementCompute>(alpha),
-                                     cutlass::from_real<ElementCompute>(beta));
-                if (!passed) {
-                    return false;
-                }
+            auto arg = *iter_arg;
+            passed =
+                    testbed.run(arg, cutlass::from_real<ElementCompute>(alpha));
+            if (!passed) {
+                return false;
             }
         }
     }
